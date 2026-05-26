@@ -44,7 +44,7 @@ def _render_main(
 
         text = task["text"]
         if not text:
-            line_text = Text("_", style="underline dim")
+            line_text = Text(" ", style="underline dim")
         elif is_done:
             line_text = Text(text, style="strike dim")
         elif is_hovered:
