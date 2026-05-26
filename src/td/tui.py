@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tty
 import termios
+from datetime import datetime, timezone
 from rich.console import Console
 from rich.text import Text
 
@@ -135,13 +136,23 @@ def _render_archive(tasks: list[dict], scroll: int, term_height: int) -> None:
         for task in visible:
             if line_count >= max_lines:
                 break
-            console.print(Text(f"  {task['text']}", style="bold"))
-            console.print(Text(f"    created   {task['created_at']}", style="dim"))
+            def fmt(iso: str | None) -> str:
+                if not iso:
+                    return ""
+                dt = datetime.fromisoformat(iso)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                local = dt.astimezone()
+                return local.strftime("%Y-%m-%d %H:%M")
+
+            line = Text("  ")
+            line.append(Text(task["text"], style="bold"))
+            line.append(Text(f"  created {fmt(task['created_at'])}", style="dim"))
             if task["done_at"]:
-                console.print(Text(f"    done      {task['done_at']}", style="dim"))
-            console.print(Text(f"    archived  {task['archived_at']}", style="dim"))
-            console.print()
-            line_count += 4
+                line.append(Text(f"  done {fmt(task['done_at'])}", style="dim"))
+            line.append(Text(f"  archived {fmt(task['archived_at'])}", style="dim"))
+            console.print(line)
+            line_count += 1
 
     console.print(Text("  ↑/k ↓/j scroll │ q:quit", style="dim"))
 
