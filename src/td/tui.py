@@ -107,7 +107,7 @@ def _render_archive(
 ) -> None:
     term.clear_screen()
 
-    header = Text("Archive • ", style="bold")
+    header = Text("archive • ", style="bold")
     header.append(Text(f"{len(tasks)} tasks", style="dim"))
     console.print(header)
     console.print(Text("─" * DIVIDER_WIDTH, style="dim"))
