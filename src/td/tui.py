@@ -24,8 +24,6 @@ def _render_main(
 ) -> None:
     term.clear_screen()
 
-    DIVIDER_WIDTH = len(_normal_hint_text())
-
     open_count = sum(1 for t in tasks if t["status"] == "active")
     completed_count = db.get_completed_count()
     header = Text("td • ", style="bold")
@@ -86,41 +84,78 @@ def _render_main(
     console.print(Text(hint_text, style="dim"))
 
 
-def _render_archive(tasks: list[dict], scroll: int, term_height: int) -> None:
+DIVIDER_WIDTH = len(_normal_hint_text())
+
+
+def _fmt_timestamp(iso: str | None) -> str:
+    if not iso:
+        return ""
+    dt = datetime.fromisoformat(iso)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone()
+    return local.strftime("%Y-%m-%d %H:%M")
+
+
+def _render_archive(
+    tasks: list[dict],
+    hover: int,
+    scroll: int,
+    term_height: int,
+    mode: str = "normal",
+    confirm_msg: str = "",
+) -> None:
     term.clear_screen()
-    console.print(Text("Archive", style="bold cyan"), Text(f"  ({len(tasks)} tasks)", style="dim"))
+
+    header = Text("Archive • ", style="bold")
+    header.append(Text(f"{len(tasks)} tasks", style="dim"))
+    console.print(header)
+    console.print(Text("─" * DIVIDER_WIDTH, style="dim"))
     console.print()
 
     if not tasks:
         console.print(Text("  No archived tasks.", style="dim"))
     else:
-        visible = tasks[scroll:]
-        max_lines = term_height - 4
-        line_count = 0
-        for task in visible:
-            if line_count >= max_lines:
-                break
-            def fmt(iso: str | None) -> str:
-                if not iso:
-                    return ""
-                dt = datetime.fromisoformat(iso)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                local = dt.astimezone()
-                return local.strftime("%Y-%m-%d %H:%M")
+        max_lines = term_height - 6  # header(2) + blank + bottom blank + divider + hints
+        start = scroll
+        end = min(start + max_lines, len(tasks))
 
-            line = Text("  ")
-            line.append(Text(task["text"], style="bold"))
-            line.append(Text(f"  created {fmt(task['created_at'])}", style="dim"))
+        for i in range(start, end):
+            task = tasks[i]
+            is_hovered = i == hover
+            prefix = "▸ " if is_hovered else "  "
+
+            # Build timestamp suffix
+            ts_parts = []
+            ts_parts.append(f"created {_fmt_timestamp(task['created_at'])}")
             if task["done_at"]:
-                line.append(Text(f"  done {fmt(task['done_at'])}", style="dim"))
-            line.append(Text(f"  archived {fmt(task['archived_at'])}", style="dim"))
-            console.print(line)
-            line_count += 1
+                ts_parts.append(f"done {_fmt_timestamp(task['done_at'])}")
+            ts_parts.append(f"archived {_fmt_timestamp(task['archived_at'])}")
+            ts_text = "  ".join(ts_parts)
 
-    hint_text = "  ↑/k ↓/j scroll │ q:quit"
+            line = Text(prefix)
+            if is_hovered:
+                # Hover: undoes strikethrough, brightens text, dims timestamps
+                line.append(Text(task["text"], style="bold cyan"))
+                line.append(Text(f"  {ts_text}", style="dim"))
+            else:
+                # Normal: gray + strikethrough, dim timestamps
+                line.append(Text(task["text"], style="strike dim"))
+                line.append(Text(f"  {ts_text}", style="strike dim"))
+            console.print(line)
+
+    if mode == "confirm":
+        console.print()
+        console.print(Text(f"  {confirm_msg}", style="yellow bold"))
+
+    # Hints
+    archive_hint_text = "  " + " │ ".join(["↑/k ↓/j:navigate", "d:delete", "r:restore", "c:clear", "q:quit"])
+    if mode == "confirm":
+        hint_text = "  " + " │ ".join(["Enter:confirm", "Esc:cancel"])
+    else:
+        hint_text = archive_hint_text
     console.print()
-    console.print(Text("─" * len(_normal_hint_text()), style="dim"))
+    console.print(Text("─" * DIVIDER_WIDTH, style="dim"))
     console.print()
     console.print(Text(hint_text, style="dim"))
 
@@ -255,22 +290,85 @@ def _run_main_loop() -> None:
 
 
 def _run_archive_loop() -> None:
+    hover = 0
     scroll = 0
-    term_height = console.height
+    term_height = console.height or 24
+    mode = "normal"
+    confirm_action: str = ""  # "delete", "archive", "clear"
+    confirm_task_id: int | None = None
 
     while True:
         tasks = db.get_archived_tasks()
-        _render_archive(tasks, scroll, term_height)
+        if not tasks:
+            hover = 0
+            scroll = 0
+        else:
+            if hover >= len(tasks):
+                hover = len(tasks) - 1
+            # Auto-scroll to keep hover visible
+            max_lines = term_height - 6
+            if hover < scroll:
+                scroll = hover
+            elif hover >= scroll + max_lines:
+                scroll = hover - max_lines + 1
+
+        if mode == "confirm" and confirm_action == "delete":
+            task_text = next((t["text"] for t in tasks if t["id"] == confirm_task_id), "")
+            confirm_msg = f'Delete "{task_text}"?'
+        elif mode == "confirm" and confirm_action == "clear":
+            confirm_msg = "Clear all archived tasks?"
+        else:
+            confirm_msg = ""
+
+        _render_archive(tasks, hover, scroll, term_height, mode, confirm_msg)
 
         key = term.read_key()
-        if key in ("q", term.KEY_ESC):
-            break
-        elif key in (term.KEY_ARROW_UP, "k"):
-            if scroll > 0:
-                scroll -= 1
-        elif key in (term.KEY_ARROW_DOWN, "j"):
-            if scroll < len(tasks) - 1:
-                scroll += 1
+
+        if mode == "normal":
+            if key in ("q", term.KEY_ESC):
+                break
+            elif key in (term.KEY_ARROW_UP, "k"):
+                if hover > 0:
+                    hover -= 1
+            elif key in (term.KEY_ARROW_DOWN, "j"):
+                if tasks and hover < len(tasks) - 1:
+                    hover += 1
+            elif key == "d":
+                if tasks:
+                    confirm_action = "delete"
+                    confirm_task_id = tasks[hover]["id"]
+                    mode = "confirm"
+            elif key == "r":
+                if tasks:
+                    restored = db.restore_task(tasks[hover]["id"])
+                    if restored:
+                        tasks = db.get_archived_tasks()
+                        if hover >= len(tasks) and hover > 0:
+                            hover = len(tasks) - 1
+            elif key == "c":
+                if tasks:
+                    confirm_action = "clear"
+                    confirm_task_id = None
+                    mode = "confirm"
+
+        elif mode == "confirm":
+            if key in ("y", term.KEY_ENTER):
+                if confirm_action == "delete" and confirm_task_id is not None:
+                    db.delete_task(confirm_task_id)
+                    tasks = db.get_archived_tasks()
+                    if hover >= len(tasks) and hover > 0:
+                        hover = len(tasks) - 1
+                elif confirm_action == "clear":
+                    db.clear_archived()
+                    hover = 0
+                    scroll = 0
+                mode = "normal"
+                confirm_action = ""
+                confirm_task_id = None
+            else:
+                mode = "normal"
+                confirm_action = ""
+                confirm_task_id = None
 
 
 def run_main() -> None:

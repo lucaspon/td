@@ -205,6 +205,42 @@ def duplicate_task(task_id: int, direction: int) -> dict | None:
         conn.close()
 
 
+def restore_task(task_id: int) -> bool:
+    """Restore an archived task to active. Returns False if no slots available."""
+    conn = _connect()
+    try:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status != 'archived'"
+        ).fetchone()[0]
+        if count >= MAX_ACTIVE_TASKS:
+            return False
+        max_pos = conn.execute(
+            "SELECT COALESCE(MAX(position), -1) FROM tasks WHERE status != 'archived'"
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE tasks SET status = 'active', position = ?, done_at = NULL, archived_at = NULL WHERE id = ?",
+            (max_pos + 1, task_id),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def clear_archived() -> int:
+    """Delete all archived tasks. Returns count deleted."""
+    conn = _connect()
+    try:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status = 'archived'"
+        ).fetchone()[0]
+        conn.execute("DELETE FROM tasks WHERE status = 'archived'")
+        conn.commit()
+        return count
+    finally:
+        conn.close()
+
+
 def get_completed_count() -> int:
     conn = _connect()
     try:
