@@ -30,6 +30,150 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+ENCRYPTION_KEY: bytes | None = None
+
+
+def is_encryption_enabled() -> bool:
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'encryption_enabled'").fetchone()
+        return row is not None and row["value"] == "1"
+    finally:
+        conn.close()
+
+
+def get_encryption_salt() -> bytes | None:
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'encryption_salt'").fetchone()
+        if row:
+            import base64
+            return base64.b64decode(row["value"])
+        return None
+    finally:
+        conn.close()
+
+
+def _derive_key(password: str, salt: bytes) -> bytes:
+    import base64
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100_000,
+    )
+    return base64.urlsafe_b64encode(kdf.derive(password.encode()))
+
+
+def _verify_key(key: bytes) -> bool:
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'password_verifier'").fetchone()
+        if not row:
+            return False
+        from cryptography.fernet import Fernet
+        f = Fernet(key)
+        decrypted = f.decrypt(row["value"].encode()).decode()
+        return decrypted == "verification_token"
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def set_encryption_key_from_password(password: str) -> bool:
+    global ENCRYPTION_KEY
+    salt = get_encryption_salt()
+    if salt is None:
+        return False
+    key = _derive_key(password, salt)
+    if _verify_key(key):
+        ENCRYPTION_KEY = key
+        return True
+    return False
+
+
+def _encrypt(text: str) -> str:
+    if not text:
+        return ""
+    if ENCRYPTION_KEY is None:
+        raise ValueError("Database is encrypted but key is not loaded")
+    from cryptography.fernet import Fernet
+    f = Fernet(ENCRYPTION_KEY)
+    return f.encrypt(text.encode()).decode()
+
+
+def _decrypt(ciphertext: str) -> str:
+    if not ciphertext:
+        return ""
+    if ENCRYPTION_KEY is None:
+        raise ValueError("Database is encrypted but key is not loaded")
+    from cryptography.fernet import Fernet
+    f = Fernet(ENCRYPTION_KEY)
+    try:
+        return f.decrypt(ciphertext.encode()).decode()
+    except Exception:
+        return "[Decryption Failed]"
+
+
+def enable_encryption(password: str) -> None:
+    import secrets
+    import base64
+    from cryptography.fernet import Fernet
+
+    salt = secrets.token_bytes(16)
+    key = _derive_key(password, salt)
+
+    conn = _connect()
+    try:
+        f = Fernet(key)
+        verifier = f.encrypt(b"verification_token").decode()
+
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('encryption_enabled', '1')")
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('encryption_salt', ?)", (base64.b64encode(salt).decode(),))
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('password_verifier', ?)", (verifier,))
+
+        rows = conn.execute("SELECT id, text FROM tasks").fetchall()
+        for row in rows:
+            enc_text = f.encrypt(row["text"].encode()).decode()
+            conn.execute("UPDATE tasks SET text = ? WHERE id = ?", (enc_text, row["id"]))
+
+        conn.commit()
+        global ENCRYPTION_KEY
+        ENCRYPTION_KEY = key
+    finally:
+        conn.close()
+
+
+def disable_encryption(password: str) -> bool:
+    global ENCRYPTION_KEY
+    salt = get_encryption_salt()
+    if salt is None:
+        return False
+    key = _derive_key(password, salt)
+    if not _verify_key(key):
+        return False
+
+    from cryptography.fernet import Fernet
+    f = Fernet(key)
+
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT id, text FROM tasks").fetchall()
+        for row in rows:
+            dec_text = f.decrypt(row["text"].encode()).decode()
+            conn.execute("UPDATE tasks SET text = ? WHERE id = ?", (dec_text, row["id"]))
+
+        conn.execute("DELETE FROM settings WHERE key IN ('encryption_enabled', 'encryption_salt', 'password_verifier')")
+        conn.commit()
+        ENCRYPTION_KEY = None
+        return True
+    finally:
+        conn.close()
+
+
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
@@ -69,7 +213,13 @@ def get_active_tasks() -> list[dict]:
             "SELECT id, text, status, position FROM tasks "
             "WHERE status != 'archived' ORDER BY position"
         ).fetchall()
-        return [dict(r) for r in rows]
+        tasks = []
+        for r in rows:
+            d = dict(r)
+            if is_encryption_enabled():
+                d["text"] = _decrypt(d["text"])
+            tasks.append(d)
+        return tasks
     finally:
         conn.close()
 
@@ -81,7 +231,13 @@ def get_archived_tasks() -> list[dict]:
             "SELECT id, text, created_at, done_at, archived_at FROM tasks "
             "WHERE status = 'archived' ORDER BY archived_at DESC"
         ).fetchall()
-        return [dict(r) for r in rows]
+        tasks = []
+        for r in rows:
+            d = dict(r)
+            if is_encryption_enabled():
+                d["text"] = _decrypt(d["text"])
+            tasks.append(d)
+        return tasks
     finally:
         conn.close()
 
@@ -98,9 +254,10 @@ def add_task(text: str) -> dict | None:
             "SELECT COALESCE(MAX(position), -1) FROM tasks WHERE status != 'archived'"
         ).fetchone()[0]
         now = _now_iso()
+        db_text = _encrypt(text) if is_encryption_enabled() else text
         cursor = conn.execute(
             "INSERT INTO tasks (text, position, created_at) VALUES (?, ?, ?)",
-            (text, max_pos + 1, now),
+            (db_text, max_pos + 1, now),
         )
         conn.commit()
         return {"id": cursor.lastrowid, "text": text, "status": "active", "position": max_pos + 1}
@@ -111,7 +268,8 @@ def add_task(text: str) -> dict | None:
 def update_task_text(task_id: int, text: str) -> None:
     conn = _connect()
     try:
-        conn.execute("UPDATE tasks SET text = ? WHERE id = ?", (text, task_id))
+        db_text = _encrypt(text) if is_encryption_enabled() else text
+        conn.execute("UPDATE tasks SET text = ? WHERE id = ?", (db_text, task_id))
         conn.commit()
     finally:
         conn.close()
@@ -222,13 +380,15 @@ def duplicate_task(task_id: int, direction: int) -> dict | None:
                 (row["position"],),
             )
         now = _now_iso()
+        db_text = row["text"]
+        plaintext = _decrypt(db_text) if is_encryption_enabled() else db_text
         cursor = conn.execute(
             "INSERT INTO tasks (text, status, position, created_at) VALUES (?, ?, ?, ?)",
-            (row["text"], row["status"], target_pos, now),
+            (db_text, row["status"], target_pos, now),
         )
         _reorder_positions(conn)
         conn.commit()
-        return {"id": cursor.lastrowid, "text": row["text"], "status": row["status"], "position": target_pos}
+        return {"id": cursor.lastrowid, "text": plaintext, "status": row["status"], "position": target_pos}
     finally:
         conn.close()
 

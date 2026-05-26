@@ -1,11 +1,12 @@
 [project]
 name = "td"
-version = "0.1.1"
+version = "0.1.2"
 description = "Minimal TUI todo CLI"
 requires-python = ">=3.14"
 dependencies = [
     "rich>=15.0.0",
     "watchdog>=6.0.0",
+    "cryptography>=42.0.0",
 ]
 
 [project.scripts]

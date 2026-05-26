@@ -12,6 +12,57 @@ from . import terminal as term
 console = Console()
 
 
+def prompt_password(prompt_text: str = "Enter password: ") -> str:
+    """Prompt the user for a password, masking the characters with *."""
+    term.clear_screen()
+    console.print()
+    sys.stdout.write(f"  {prompt_text}")
+    sys.stdout.flush()
+
+    password = ""
+    while True:
+        key = term.read_key()
+        if key in (term.KEY_ENTER, "\r", "\n"):
+            break
+        elif key in (term.KEY_ESC, "q"):
+            term.show_cursor()
+            sys.exit(0)
+        elif key == term.KEY_BACKSPACE:
+            if len(password) > 0:
+                password = password[:-1]
+                sys.stdout.write("\b \b")
+                sys.stdout.flush()
+        elif len(key) == 1 and ord(key) >= 32:
+            password += key
+            sys.stdout.write("*")
+            sys.stdout.flush()
+
+    term.clear_screen()
+    return password
+
+
+def _ensure_unlocked() -> bool:
+    if not db.is_encryption_enabled():
+        return True
+    if db.ENCRYPTION_KEY is not None:
+        return True
+
+    attempts = 0
+    while attempts < 3:
+        if attempts == 0:
+            prompt_text = "Database is encrypted. Enter password: "
+        else:
+            prompt_text = f"Incorrect password (attempt {attempts}/3). Try again: "
+        password = prompt_password(prompt_text)
+        if db.set_encryption_key_from_password(password):
+            return True
+        attempts += 1
+
+    term.clear_screen()
+    console.print(Text("  Too many incorrect password attempts. Exiting.", style="red bold"))
+    sys.exit(1)
+
+
 def _normal_hint_text() -> str:
     return "  " + " │ ".join(["a:add", "e:edit", "d:delete", "Space:done", "c:clear", ",:view archived", "/:settings", "Shift+↑↓:reorder", "Alt+↑↓:dup"])
 
@@ -432,8 +483,21 @@ def _render_settings(
         max_line.append(Text(str(max_tasks), style="dim"))
     console.print(max_line)
 
+    # Encryption row
+    is_hovered_enc = hover == 1
+    prefix_enc = "▸ " if is_hovered_enc else "  "
+    enc_line = Text(prefix_enc)
+    enc_status = "enabled" if db.is_encryption_enabled() else "disabled"
+    if is_hovered_enc:
+        enc_line.append(Text("encryption: ", style="cyan bold"))
+        enc_line.append(Text(enc_status, style="bold"))
+    else:
+        enc_line.append(Text("encryption: ", style="dim"))
+        enc_line.append(Text(enc_status, style="dim"))
+    console.print(enc_line)
+
     # Update row
-    is_hovered_update = hover == 1
+    is_hovered_update = hover == 2
     prefix2 = "▸ " if is_hovered_update else "  "
     update_line = Text(prefix2)
     if is_hovered_update:
@@ -462,7 +526,7 @@ def _run_settings_loop() -> None:
     edit_text = ""
     edit_cursor = 0
     status_msg = ""
-    num_items = 2  # max_tasks, update
+    num_items = 3  # max_tasks, encryption, update
 
     while True:
         _render_settings(hover, mode, edit_text, edit_cursor, status_msg)
@@ -484,6 +548,41 @@ def _run_settings_loop() -> None:
                     edit_text = str(db.get_max_tasks())
                     edit_cursor = len(edit_text)
                 elif hover == 1:
+                    # Toggle encryption
+                    if not db.is_encryption_enabled():
+                        # Prompt warning
+                        term.clear_screen()
+                        console.print()
+                        console.print(Text("  [!] WARNING: If you forget your password, your tasks will be", style="yellow bold"))
+                        console.print(Text("      permanently lost. There is no password recovery option.", style="yellow bold"))
+                        console.print()
+                        console.print(Text("  Press Enter to continue, or Esc to cancel...", style="dim"))
+
+                        confirm_key = ""
+                        while confirm_key not in (term.KEY_ENTER, "\r", "\n", term.KEY_ESC):
+                            confirm_key = term.read_key()
+
+                        if confirm_key in (term.KEY_ENTER, "\r", "\n"):
+                            password = prompt_password("Create password to encrypt database: ")
+                            if password:
+                                confirm = prompt_password("Confirm password: ")
+                                if password == confirm:
+                                    db.enable_encryption(password)
+                                    status_msg = "✓ database encrypted successfully"
+                                else:
+                                    status_msg = "✗ passwords do not match"
+                            else:
+                                status_msg = "✗ password cannot be empty"
+                        else:
+                            status_msg = "  cancelled"
+                    else:
+                        password = prompt_password("Enter password to disable encryption: ")
+                        if password:
+                            if db.disable_encryption(password):
+                                status_msg = "✓ encryption disabled successfully"
+                            else:
+                                status_msg = "✗ incorrect password"
+                elif hover == 2:
                     # Run update
                     import subprocess
                     result = subprocess.run(
@@ -536,6 +635,8 @@ def run_settings() -> None:
     term.hide_cursor()
     with term.raw_mode():
         try:
+            if not _ensure_unlocked():
+                return
             _run_settings_loop()
         finally:
             term.show_cursor()
@@ -545,6 +646,8 @@ def run_main() -> None:
     term.hide_cursor()
     with term.raw_mode():
         try:
+            if not _ensure_unlocked():
+                return
             _run_main_loop()
         finally:
             term.show_cursor()
@@ -555,6 +658,8 @@ def run_archive() -> None:
     term.hide_cursor()
     with term.raw_mode():
         try:
+            if not _ensure_unlocked():
+                return
             _run_archive_loop()
         finally:
             term.show_cursor()
