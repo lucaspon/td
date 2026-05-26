@@ -40,6 +40,6 @@ In edit mode, type to modify text, Enter to confirm, Esc to cancel.
 
 Tasks are stored in `~/.td.db` (portable SQLite file). Delete it to start fresh.
 
-## Donate
+## Show some love
 
 Ethereum: `0x88a0e1b80B92F0cFaa89a936b827Ce291cFb0028`
