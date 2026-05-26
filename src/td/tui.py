@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timezone
 
 from rich.console import Console
@@ -66,10 +67,14 @@ def _render_main(
     console.print(output)
 
     if mode == "edit":
-        before = edit_text[:edit_cursor]
-        after = edit_text[edit_cursor:]
+        edit_line = Text("> ", style="yellow bold")
+        edit_line.append(Text(edit_text[:edit_cursor], style="yellow bold"))
+        char_under = edit_text[edit_cursor] if edit_cursor < len(edit_text) else " "
+        edit_line.append(Text(char_under, style="reverse yellow bold"))
+        if edit_cursor < len(edit_text):
+            edit_line.append(Text(edit_text[edit_cursor + 1:], style="yellow bold"))
         console.print()
-        console.print(Text(f"> {before}", style="yellow bold"), Text("█", style="yellow"), Text(f"{after}", style="yellow bold"))
+        console.print(edit_line)
     elif mode == "confirm":
         console.print()
         console.print(Text(f"  {confirm_msg}", style="yellow bold"))
@@ -294,11 +299,9 @@ def _run_main_loop() -> None:
                 if edit_cursor < len(edit_text):
                     edit_text = edit_text[:edit_cursor] + edit_text[edit_cursor + 1:]
             elif key == term.KEY_ARROW_LEFT:
-                if edit_cursor > 0:
-                    edit_cursor -= 1
+                edit_cursor = max(0, edit_cursor - 1)
             elif key == term.KEY_ARROW_RIGHT:
-                if edit_cursor < len(edit_text):
-                    edit_cursor += 1
+                edit_cursor = min(len(edit_text), edit_cursor + 1)
             elif key == term.KEY_HOME:
                 edit_cursor = 0
             elif key == term.KEY_END:
@@ -414,12 +417,13 @@ def _render_settings(
     prefix = "▸ " if is_hovered_max else "  "
     max_line = Text(prefix)
     if mode == "edit" and hover == 0:
-        before = edit_text[:edit_cursor]
-        after = edit_text[edit_cursor:]
+        max_line = Text(prefix)
         max_line.append(Text("max tasks: ", style="cyan bold"))
-        max_line.append(Text(before, style="yellow bold"))
-        max_line.append(Text("█", style="yellow"))
-        max_line.append(Text(after, style="yellow bold"))
+        max_line.append(Text(edit_text[:edit_cursor], style="yellow bold"))
+        char_under = edit_text[edit_cursor] if edit_cursor < len(edit_text) else " "
+        max_line.append(Text(char_under, style="reverse yellow bold"))
+        if edit_cursor < len(edit_text):
+            max_line.append(Text(edit_text[edit_cursor + 1:], style="yellow bold"))
     elif is_hovered_max:
         max_line.append(Text("max tasks: ", style="cyan bold"))
         max_line.append(Text(str(max_tasks), style="bold"))
@@ -516,11 +520,9 @@ def _run_settings_loop() -> None:
                 if edit_cursor < len(edit_text):
                     edit_text = edit_text[:edit_cursor] + edit_text[edit_cursor + 1:]
             elif key == term.KEY_ARROW_LEFT:
-                if edit_cursor > 0:
-                    edit_cursor -= 1
+                edit_cursor = max(0, edit_cursor - 1)
             elif key == term.KEY_ARROW_RIGHT:
-                if edit_cursor < len(edit_text):
-                    edit_cursor += 1
+                edit_cursor = min(len(edit_text), edit_cursor + 1)
             elif key == term.KEY_HOME:
                 edit_cursor = 0
             elif key == term.KEY_END:

@@ -1,0 +1,42 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          enable-cache: true
+
+      - name: Install Doppler CLI
+        run: curl -Ls https://doppler.com/install.sh | sh
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: uv pip install build twine
+
+      - name: Build package
+        # Using doppler run to ensure PYPI_API is available during the build process
+        run: doppler run -- python -m build
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+
+      - name: Publish to PyPI
+        # Using doppler run to inject the PYPI_API secret into the twine environment
+        run: doppler run -- twine upload dist/*
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          TWINE_USERNAME: __token__

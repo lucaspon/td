@@ -1,6 +1,7 @@
-.venv/
-__pycache__/
-*.pyc
-dist/
-*.egg-info/
 .td.db
+dist/
+*.pyc
+__pycache__/
+.venv/
+.env
+AGENTS.md
