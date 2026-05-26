@@ -19,6 +19,16 @@ def _render_main(
     confirm_msg: str = "",
 ) -> None:
     term.clear_screen()
+
+    open_count = sum(1 for t in tasks if t["status"] == "active")
+    done_count = sum(1 for t in tasks if t["status"] == "done")
+    header = Text("td ", style="bold")
+    header.append(Text(f"{open_count} open", style="dim"))
+    header.append(Text(" / ", style="dim"))
+    header.append(Text(f"{done_count} completed", style="dim"))
+    console.print(header)
+    console.print()
+
     lines = []
     for i, task in enumerate(tasks):
         is_hovered = i == hover
