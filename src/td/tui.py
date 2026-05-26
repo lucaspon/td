@@ -20,6 +20,7 @@ def _render_main(
     hover: int,
     mode: str = "normal",
     edit_text: str = "",
+    edit_cursor: int = 0,
     confirm_msg: str = "",
 ) -> None:
     term.clear_screen()
@@ -65,8 +66,10 @@ def _render_main(
     console.print(output)
 
     if mode == "edit":
+        before = edit_text[:edit_cursor]
+        after = edit_text[edit_cursor:]
         console.print()
-        console.print(Text(f"> {edit_text}_", style="yellow bold"))
+        console.print(Text(f"> {before}", style="yellow bold"), Text("█", style="yellow"), Text(f"{after}", style="yellow bold"))
     elif mode == "confirm":
         console.print()
         console.print(Text(f"  {confirm_msg}", style="yellow bold"))
@@ -161,6 +164,7 @@ def _run_main_loop() -> None:
     mode = "normal"
     edit_task_id: int | None = None
     edit_text = ""
+    edit_cursor = 0
     confirm_action: str = ""  # "delete" or "archive"
     confirm_task_id: int | None = None
 
@@ -179,7 +183,7 @@ def _run_main_loop() -> None:
         else:
             confirm_msg = ""
 
-        _render_main(tasks, hover, mode, edit_text, confirm_msg)
+        _render_main(tasks, hover, mode, edit_text, edit_cursor, confirm_msg)
 
         key = term.read_key()
 
@@ -215,6 +219,7 @@ def _run_main_loop() -> None:
                     mode = "edit"
                     edit_task_id = tasks[hover]["id"]
                     edit_text = tasks[hover]["text"]
+                    edit_cursor = len(edit_text)
             elif key == "a":
                 if len(tasks) < db.MAX_ACTIVE_TASKS:
                     new_task = db.add_task("")
@@ -223,6 +228,7 @@ def _run_main_loop() -> None:
                         hover = len(tasks) - 1
                         edit_task_id = new_task["id"]
                         edit_text = ""
+                        edit_cursor = 0
                         mode = "edit"
             elif key == "d":
                 if tasks:
@@ -269,20 +275,36 @@ def _run_main_loop() -> None:
                 mode = "normal"
                 edit_task_id = None
                 edit_text = ""
+                edit_cursor = 0
             elif key == term.KEY_ENTER:
                 if edit_task_id:
                     db.update_task_text(edit_task_id, edit_text)
                 mode = "normal"
                 edit_task_id = None
                 edit_text = ""
+                edit_cursor = 0
             elif key == term.KEY_BACKSPACE:
-                edit_text = edit_text[:-1]
+                if edit_cursor > 0:
+                    edit_text = edit_text[:edit_cursor - 1] + edit_text[edit_cursor:]
+                    edit_cursor -= 1
             elif key == term.KEY_DELETE:
-                edit_text = edit_text[:-1]
+                if edit_cursor < len(edit_text):
+                    edit_text = edit_text[:edit_cursor] + edit_text[edit_cursor + 1:]
+            elif key == term.KEY_ARROW_LEFT:
+                if edit_cursor > 0:
+                    edit_cursor -= 1
+            elif key == term.KEY_ARROW_RIGHT:
+                if edit_cursor < len(edit_text):
+                    edit_cursor += 1
+            elif key == term.KEY_HOME:
+                edit_cursor = 0
+            elif key == term.KEY_END:
+                edit_cursor = len(edit_text)
             elif key in (term.KEY_ARROW_UP, term.KEY_ARROW_DOWN):
                 pass
             elif len(key) == 1 and ord(key) >= 32:
-                edit_text += key
+                edit_text = edit_text[:edit_cursor] + key + edit_text[edit_cursor:]
+                edit_cursor += 1
 
 
 def _run_archive_loop() -> None:
