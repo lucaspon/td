@@ -135,11 +135,9 @@ def _render_archive(
 
             line = Text(prefix)
             if is_hovered:
-                # Hover: undoes strikethrough, brightens text, dims timestamps
-                line.append(Text(task["text"], style="bold cyan"))
-                line.append(Text(f"  {ts_text}", style="dim"))
+                line.append(Text(task["text"], style="strike bold cyan"))
+                line.append(Text(f"  {ts_text}", style="strike dim"))
             else:
-                # Normal: gray + strikethrough, dim timestamps
                 line.append(Text(task["text"], style="strike dim"))
                 line.append(Text(f"  {ts_text}", style="strike dim"))
             console.print(line)
