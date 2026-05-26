@@ -20,6 +20,17 @@ def _render_main(
 ) -> None:
     term.clear_screen()
 
+    if mode == "normal":
+        hint_parts = ["a:add", "e:edit", "d:delete", "Space:done", "c:clear", ",:view archived", "Shift+↑↓:reorder", "Alt+↑↓:dup"]
+    elif mode == "edit":
+        hint_parts = ["Esc:cancel", "Enter:confirm"]
+    elif mode == "confirm":
+        hint_parts = ["Enter:confirm", "Esc:cancel"]
+    else:
+        hint_parts = []
+    hint_text = "  " + " │ ".join(hint_parts)
+    divider_width = len(hint_text)
+
     open_count = sum(1 for t in tasks if t["status"] == "active")
     done_count = sum(1 for t in tasks if t["status"] == "done")
     header = Text("td • ", style="bold")
@@ -27,7 +38,7 @@ def _render_main(
     header.append(Text(" / ", style="dim"))
     header.append(Text(f"{done_count} completed", style="dim"))
     console.print(header)
-    console.print(Text("─" * len(f"td • {open_count} open / {done_count} completed"), style="dim"))
+    console.print(Text("─" * divider_width, style="dim"))
     console.print()
 
     lines = []
@@ -75,9 +86,8 @@ def _render_main(
         hint_parts = ["Enter:confirm", "Esc:cancel"]
     else:
         hint_parts = []
-    hint_text = "  " + " │ ".join(hint_parts)
     console.print()
-    console.print(Text("─" * len(hint_text), style="dim"))
+    console.print(Text("─" * divider_width, style="dim"))
     console.print()
     console.print(Text(hint_text, style="dim"))
 
