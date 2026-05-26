@@ -182,10 +182,10 @@ def run_main() -> None:
                 hover = 0
 
             if mode == "confirm" and confirm_action == "archive":
-                confirm_msg = "Clear all done tasks? y/n"
+                confirm_msg = "Clear all done tasks?"
             elif mode == "confirm" and confirm_action == "delete":
                 task_text = next((t["text"] for t in tasks if t["id"] == confirm_task_id), "")
-                confirm_msg = f'Delete "{task_text}"? y/n'
+                confirm_msg = f'Delete "{task_text}"?'
             else:
                 confirm_msg = ""
 
