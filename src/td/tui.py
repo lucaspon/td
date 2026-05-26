@@ -14,7 +14,7 @@ console = Console()
 ESC = "\x1b"
 ARROW_UP = "\x1b[A"
 ARROW_DOWN = "\x1b[B"
-ENTER = "\r"
+ENTER = "\n"  # ICRNL translates \r from terminal to \n in cbreak mode
 BACKSPACE = "\x7f"
 DELETE = "\x1b[3~"
 
@@ -64,7 +64,13 @@ def _show_cursor() -> None:
     console.file.flush()
 
 
-def _render_main(tasks: list[dict], hover: int, mode: str = "normal", edit_text: str = "") -> None:
+def _render_main(
+    tasks: list[dict],
+    hover: int,
+    mode: str = "normal",
+    edit_text: str = "",
+    confirm_msg: str = "",
+) -> None:
     _clear_screen()
     lines = []
     for i, task in enumerate(tasks):
@@ -97,13 +103,19 @@ def _render_main(tasks: list[dict], hover: int, mode: str = "normal", edit_text:
     if mode == "edit":
         console.print()
         console.print(Text(f"> {edit_text}_", style="yellow bold"))
+    elif mode == "confirm":
+        console.print()
+        console.print(Text(f"  {confirm_msg}", style="yellow bold"))
 
     console.print()
-    hint_parts = ["n:add", "Enter:edit", "d:delete", "Space:done", "a:archive"]
     if mode == "normal":
-        hint_parts.append("q:quit")
-    else:
+        hint_parts = ["n:add", "Enter:edit", "d:delete", "Space:done", "a:archive", "q:quit"]
+    elif mode == "edit":
         hint_parts = ["Esc:cancel", "Enter:confirm"]
+    elif mode == "confirm":
+        hint_parts = ["y:confirm", "Esc/n:cancel"]
+    else:
+        hint_parts = []
     console.print(Text("  " + " │ ".join(hint_parts), style="dim"))
 
 
@@ -142,6 +154,8 @@ def run_main() -> None:
         mode = "normal"
         edit_task_id: int | None = None
         edit_text = ""
+        confirm_action: str = ""  # "delete" or "archive"
+        confirm_task_id: int | None = None
 
         while True:
             tasks = db.get_active_tasks()
@@ -149,7 +163,16 @@ def run_main() -> None:
                 hover = len(tasks) - 1
             if not tasks:
                 hover = 0
-            _render_main(tasks, hover, mode, edit_text)
+
+            if mode == "confirm" and confirm_action == "archive":
+                confirm_msg = "Archive all done tasks? y/n"
+            elif mode == "confirm" and confirm_action == "delete":
+                task_text = next((t["text"] for t in tasks if t["id"] == confirm_task_id), "")
+                confirm_msg = f'Delete "{task_text}"? y/n'
+            else:
+                confirm_msg = ""
+
+            _render_main(tasks, hover, mode, edit_text, confirm_msg)
 
             key = _read_key()
 
@@ -178,16 +201,37 @@ def run_main() -> None:
                             mode = "edit"
                 elif key == "d":
                     if tasks:
-                        task_id = tasks[hover]["id"]
-                        db.delete_task(task_id)
-                        tasks = db.get_active_tasks()
-                        if hover >= len(tasks) and hover > 0:
-                            hover -= 1
+                        confirm_action = "delete"
+                        confirm_task_id = tasks[hover]["id"]
+                        mode = "confirm"
                 elif key == " ":
                     if tasks:
                         db.toggle_done(tasks[hover]["id"])
                 elif key == "a":
-                    db.archive_done()
+                    done_count = sum(1 for t in tasks if t["status"] == "done")
+                    if done_count > 0:
+                        confirm_action = "archive"
+                        confirm_task_id = None
+                        mode = "confirm"
+
+            elif mode == "confirm":
+                if key == "y":
+                    if confirm_action == "delete" and confirm_task_id is not None:
+                        db.delete_task(confirm_task_id)
+                        tasks = db.get_active_tasks()
+                        if hover >= len(tasks) and hover > 0:
+                            hover = len(tasks) - 1
+                    elif confirm_action == "archive":
+                        db.archive_done()
+                    mode = "normal"
+                    confirm_action = ""
+                    confirm_task_id = None
+                elif key in ("n", ESC, ENTER) or key in (ARROW_UP, ARROW_DOWN):
+                    # Cancel — any key besides 'y' cancels, but be explicit about common ones
+                    mode = "normal"
+                    confirm_action = ""
+                    confirm_task_id = None
+
             elif mode == "edit":
                 if key == ESC:
                     # If task text is empty, delete it
