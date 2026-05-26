@@ -205,6 +205,17 @@ def duplicate_task(task_id: int, direction: int) -> dict | None:
         conn.close()
 
 
+def get_completed_count() -> int:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status IN ('done', 'archived')"
+        ).fetchone()
+        return row[0]
+    finally:
+        conn.close()
+
+
 def _reorder_positions(conn: sqlite3.Connection) -> None:
     rows = conn.execute(
         "SELECT id FROM tasks WHERE status != 'archived' ORDER BY position"

@@ -11,6 +11,10 @@ from . import terminal as term
 console = Console()
 
 
+def _normal_hint_text() -> str:
+    return "  " + " │ ".join(["a:add", "e:edit", "d:delete", "Space:done", "c:clear", ",:view archived", "Shift+↑↓:reorder", "Alt+↑↓:dup"])
+
+
 def _render_main(
     tasks: list[dict],
     hover: int,
@@ -20,25 +24,16 @@ def _render_main(
 ) -> None:
     term.clear_screen()
 
-    if mode == "normal":
-        hint_parts = ["a:add", "e:edit", "d:delete", "Space:done", "c:clear", ",:view archived", "Shift+↑↓:reorder", "Alt+↑↓:dup"]
-    elif mode == "edit":
-        hint_parts = ["Esc:cancel", "Enter:confirm"]
-    elif mode == "confirm":
-        hint_parts = ["Enter:confirm", "Esc:cancel"]
-    else:
-        hint_parts = []
-    hint_text = "  " + " │ ".join(hint_parts)
-    divider_width = len(hint_text)
+    DIVIDER_WIDTH = len(_normal_hint_text())
 
     open_count = sum(1 for t in tasks if t["status"] == "active")
-    done_count = sum(1 for t in tasks if t["status"] == "done")
+    completed_count = db.get_completed_count()
     header = Text("td • ", style="bold")
     header.append(Text(f"{open_count} open", style="dim"))
     header.append(Text(" / ", style="dim"))
-    header.append(Text(f"{done_count} completed", style="dim"))
+    header.append(Text(f"{completed_count} completed", style="dim"))
     console.print(header)
-    console.print(Text("─" * divider_width, style="dim"))
+    console.print(Text("─" * DIVIDER_WIDTH, style="dim"))
     console.print()
 
     lines = []
@@ -78,16 +73,15 @@ def _render_main(
         console.print()
         console.print(Text(f"  {confirm_msg}", style="yellow bold"))
 
-    if mode == "normal":
-        hint_parts = ["a:add", "e:edit", "d:delete", "Space:done", "c:clear", ",:view archived", "Shift+↑↓:reorder", "Alt+↑↓:dup"]
-    elif mode == "edit":
+    if mode == "edit":
         hint_parts = ["Esc:cancel", "Enter:confirm"]
     elif mode == "confirm":
         hint_parts = ["Enter:confirm", "Esc:cancel"]
     else:
         hint_parts = []
+    hint_text = "  " + " │ ".join(hint_parts) if mode != "normal" else _normal_hint_text()
     console.print()
-    console.print(Text("─" * divider_width, style="dim"))
+    console.print(Text("─" * DIVIDER_WIDTH, style="dim"))
     console.print()
     console.print(Text(hint_text, style="dim"))
 
@@ -126,7 +120,7 @@ def _render_archive(tasks: list[dict], scroll: int, term_height: int) -> None:
 
     hint_text = "  ↑/k ↓/j scroll │ q:quit"
     console.print()
-    console.print(Text("─" * len(hint_text), style="dim"))
+    console.print(Text("─" * len(_normal_hint_text()), style="dim"))
     console.print()
     console.print(Text(hint_text, style="dim"))
 
