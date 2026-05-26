@@ -115,8 +115,10 @@ def _render_main(
         console.print(Text(f"  {confirm_msg}", style="yellow bold"))
 
     console.print()
+    console.print(Text("─" * console.width, style="dim"))
+    console.print()
     if mode == "normal":
-        hint_parts = ["a:add", "e:edit", "d:delete", "Space:done", "c:clear", ",:archive", "Shift+↑↓:reorder", "Alt+↑↓:dup"]
+        hint_parts = ["a:add", "e:edit", "d:delete", "Space:done", "c:clear", ",:view archived", "Shift+↑↓:reorder", "Alt+↑↓:dup"]
     elif mode == "edit":
         hint_parts = ["Esc:cancel", "Enter:confirm"]
     elif mode == "confirm":
