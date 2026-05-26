@@ -120,7 +120,7 @@ def _render_main(
     elif mode == "edit":
         hint_parts = ["Esc:cancel", "Enter:confirm"]
     elif mode == "confirm":
-        hint_parts = ["y/Enter:confirm", "Esc:cancel"]
+        hint_parts = ["Enter:confirm", "Esc:cancel"]
     else:
         hint_parts = []
     console.print(Text("  " + " │ ".join(hint_parts), style="dim"))
