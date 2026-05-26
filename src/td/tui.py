@@ -80,8 +80,10 @@ def _render_main(
         prefix = "▸ " if is_hovered else "  "
         marker = "✓" if is_done else "○"
 
-        text = task["text"] or "(empty)"
-        if is_done:
+        text = task["text"]
+        if not text:
+            line_text = Text("_", style="underline dim")
+        elif is_done:
             line_text = Text(text, style="strike dim")
         elif is_hovered:
             line_text = Text(text, style="cyan bold")
