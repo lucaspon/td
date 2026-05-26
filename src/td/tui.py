@@ -1,0 +1,246 @@
+from __future__ import annotations
+
+import sys
+import tty
+import termios
+from rich.console import Console
+from rich.text import Text
+
+from . import db
+
+console = Console()
+
+# ANSI escape sequences
+ESC = "\x1b"
+ARROW_UP = "\x1b[A"
+ARROW_DOWN = "\x1b[B"
+ENTER = "\r"
+BACKSPACE = "\x7f"
+DELETE = "\x1b[3~"
+
+
+def _read_key() -> str:
+    """Read a single keypress, handling escape sequences."""
+    fd = sys.stdin.fileno()
+    ch = sys.stdin.read(1)
+    if ch == ESC:
+        # Read rest of escape sequence
+        seq = ch
+        try:
+            # Set a short timeout for sequence reading
+            old = termios.tcgetattr(fd)
+            new = termios.tcgetattr(fd)
+            new[3] = new[3] & ~(termios.ICANON | termios.ECHO)
+            new[6][termios.VMIN] = 0
+            new[6][termios.VTIME] = 1  # 100ms timeout
+            termios.tcsetattr(fd, termios.TCSANOW, new)
+            while True:
+                c = sys.stdin.read(1)
+                if c:
+                    seq += c
+                    if c.isalpha() or c == "~":
+                        break
+                else:
+                    break
+            termios.tcsetattr(fd, termios.TCSANOW, old)
+        except Exception:
+            pass
+        return seq
+    return ch
+
+
+def _clear_screen() -> None:
+    console.file.write("\033[2J\033[H")
+    console.file.flush()
+
+
+def _hide_cursor() -> None:
+    console.file.write("\033[?25l")
+    console.file.flush()
+
+
+def _show_cursor() -> None:
+    console.file.write("\033[?25h")
+    console.file.flush()
+
+
+def _render_main(tasks: list[dict], hover: int, mode: str = "normal", edit_text: str = "") -> None:
+    _clear_screen()
+    lines = []
+    for i, task in enumerate(tasks):
+        is_hovered = i == hover
+        is_done = task["status"] == "done"
+
+        prefix = "▸ " if is_hovered else "  "
+        marker = "✓" if is_done else "○"
+
+        text = task["text"] or "(empty)"
+        if is_done:
+            line_text = Text(text, style="strike dim")
+        elif is_hovered:
+            line_text = Text(text, style="cyan bold")
+        else:
+            line_text = Text(text)
+
+        line = Text(prefix)
+        line.append(marker)
+        line.append(" ")
+        line.append(line_text)
+        lines.append(line)
+
+    if not tasks:
+        lines.append(Text("  No tasks. Press n to add one.", style="dim"))
+
+    output = Text("\n").join(lines)
+    console.print(output)
+
+    if mode == "edit":
+        console.print()
+        console.print(Text(f"> {edit_text}_", style="yellow bold"))
+
+    console.print()
+    hint_parts = ["n:add", "Enter:edit", "d:delete", "Space:done", "a:archive"]
+    if mode == "normal":
+        hint_parts.append("q:quit")
+    else:
+        hint_parts = ["Esc:cancel", "Enter:confirm"]
+    console.print(Text("  " + " │ ".join(hint_parts), style="dim"))
+
+
+def _render_archive(tasks: list[dict], scroll: int, term_height: int) -> None:
+    _clear_screen()
+    console.print(Text("Archive", style="bold cyan"), Text(f"  ({len(tasks)} tasks)", style="dim"))
+    console.print()
+
+    if not tasks:
+        console.print(Text("  No archived tasks.", style="dim"))
+    else:
+        visible = tasks[scroll:]
+        max_lines = term_height - 4
+        line_count = 0
+        for task in visible:
+            if line_count >= max_lines:
+                break
+            console.print(Text(f"  {task['text']}", style="bold"))
+            console.print(Text(f"    created   {task['created_at']}", style="dim"))
+            if task["done_at"]:
+                console.print(Text(f"    done      {task['done_at']}", style="dim"))
+            console.print(Text(f"    archived  {task['archived_at']}", style="dim"))
+            console.print()
+            line_count += 4
+
+    console.print(Text("  ↑/k ↓/j scroll │ q:quit", style="dim"))
+
+
+def run_main() -> None:
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    _hide_cursor()
+    try:
+        tty.setcbreak(fd)
+        hover = 0
+        mode = "normal"
+        edit_task_id: int | None = None
+        edit_text = ""
+
+        while True:
+            tasks = db.get_active_tasks()
+            if tasks and hover >= len(tasks):
+                hover = len(tasks) - 1
+            if not tasks:
+                hover = 0
+            _render_main(tasks, hover, mode, edit_text)
+
+            key = _read_key()
+
+            if mode == "normal":
+                if key in ("q", ESC):
+                    break
+                elif key in (ARROW_UP, "k"):
+                    if hover > 0:
+                        hover -= 1
+                elif key in (ARROW_DOWN, "j"):
+                    if tasks and hover < len(tasks) - 1:
+                        hover += 1
+                elif key == ENTER:
+                    if tasks:
+                        mode = "edit"
+                        edit_task_id = tasks[hover]["id"]
+                        edit_text = tasks[hover]["text"]
+                elif key == "n":
+                    if len(tasks) < db.MAX_ACTIVE_TASKS:
+                        new_task = db.add_task("")
+                        if new_task:
+                            tasks = db.get_active_tasks()
+                            hover = len(tasks) - 1
+                            edit_task_id = new_task["id"]
+                            edit_text = ""
+                            mode = "edit"
+                elif key == "d":
+                    if tasks:
+                        task_id = tasks[hover]["id"]
+                        db.delete_task(task_id)
+                        tasks = db.get_active_tasks()
+                        if hover >= len(tasks) and hover > 0:
+                            hover -= 1
+                elif key == " ":
+                    if tasks:
+                        db.toggle_done(tasks[hover]["id"])
+                elif key == "a":
+                    db.archive_done()
+            elif mode == "edit":
+                if key == ESC:
+                    # If task text is empty, delete it
+                    if edit_task_id:
+                        current = next((t for t in db.get_active_tasks() if t["id"] == edit_task_id), None)
+                        if current and not current["text"]:
+                            db.delete_task(edit_task_id)
+                    mode = "normal"
+                    edit_task_id = None
+                    edit_text = ""
+                elif key == ENTER:
+                    if edit_task_id:
+                        db.update_task_text(edit_task_id, edit_text)
+                    mode = "normal"
+                    edit_task_id = None
+                    edit_text = ""
+                elif key == BACKSPACE:
+                    edit_text = edit_text[:-1]
+                elif key == DELETE:
+                    edit_text = edit_text[:-1]
+                elif key in (ARROW_UP, ARROW_DOWN):
+                    pass  # Ignore arrow keys in edit mode
+                elif len(key) == 1 and ord(key) >= 32:
+                    edit_text += key
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        _show_cursor()
+        _clear_screen()
+
+
+def run_archive() -> None:
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    _hide_cursor()
+    try:
+        tty.setcbreak(fd)
+        scroll = 0
+        term_height = console.height
+
+        while True:
+            tasks = db.get_archived_tasks()
+            _render_archive(tasks, scroll, term_height)
+
+            key = _read_key()
+            if key in ("q", ESC):
+                break
+            elif key in (ARROW_UP, "k"):
+                if scroll > 0:
+                    scroll -= 1
+            elif key in (ARROW_DOWN, "j"):
+                if scroll < len(tasks) - 1:
+                    scroll += 1
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        _show_cursor()
+        _clear_screen()
