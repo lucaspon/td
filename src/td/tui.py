@@ -147,7 +147,7 @@ def _render_archive(
         console.print(Text(f"  {confirm_msg}", style="yellow bold"))
 
     # Hints
-    archive_hint_text = "  " + " │ ".join(["↑/k ↓/j:navigate", "d:delete", "r:restore", "c:clear", "q:quit"])
+    archive_hint_text = "  " + " │ ".join(["↑/k ↓/j:navigate", "d:delete", "r:restore", "c:clear", "q:return"])
     if mode == "confirm":
         hint_text = "  " + " │ ".join(["Enter:confirm", "Esc:cancel"])
     else:
