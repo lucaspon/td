@@ -6,7 +6,7 @@ from pathlib import Path
 
 DB_PATH = Path.home() / ".td.db"
 
-MAX_ACTIVE_TASKS = 15
+DEFAULT_MAX_TASKS = 15
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -17,6 +17,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at  TEXT NOT NULL,
     done_at     TEXT,
     archived_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 """
 
@@ -32,6 +37,29 @@ def _connect() -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
     return conn
+
+
+def get_max_tasks() -> int:
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'max_tasks'").fetchone()
+        if row:
+            return int(row["value"])
+        return DEFAULT_MAX_TASKS
+    finally:
+        conn.close()
+
+
+def set_max_tasks(value: int) -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('max_tasks', ?)",
+            (str(value),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_active_tasks() -> list[dict]:
@@ -64,7 +92,7 @@ def add_task(text: str) -> dict | None:
         count = conn.execute(
             "SELECT COUNT(*) FROM tasks WHERE status != 'archived'"
         ).fetchone()[0]
-        if count >= MAX_ACTIVE_TASKS:
+        if count >= get_max_tasks():
             return None
         max_pos = conn.execute(
             "SELECT COALESCE(MAX(position), -1) FROM tasks WHERE status != 'archived'"
@@ -172,7 +200,7 @@ def duplicate_task(task_id: int, direction: int) -> dict | None:
         count = conn.execute(
             "SELECT COUNT(*) FROM tasks WHERE status != 'archived'"
         ).fetchone()[0]
-        if count >= MAX_ACTIVE_TASKS:
+        if count >= get_max_tasks():
             return None
         row = conn.execute(
             "SELECT text, status, position FROM tasks WHERE id = ?", (task_id,)
@@ -212,7 +240,7 @@ def restore_task(task_id: int) -> bool:
         count = conn.execute(
             "SELECT COUNT(*) FROM tasks WHERE status != 'archived'"
         ).fetchone()[0]
-        if count >= MAX_ACTIVE_TASKS:
+        if count >= get_max_tasks():
             return False
         max_pos = conn.execute(
             "SELECT COALESCE(MAX(position), -1) FROM tasks WHERE status != 'archived'"

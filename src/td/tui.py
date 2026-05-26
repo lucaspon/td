@@ -12,7 +12,7 @@ console = Console()
 
 
 def _normal_hint_text() -> str:
-    return "  " + " │ ".join(["a:add", "e:edit", "d:delete", "Space:done", "c:clear", ",:view archived", "Shift+↑↓:reorder", "Alt+↑↓:dup"])
+    return "  " + " │ ".join(["a:add", "e:edit", "d:delete", "Space:done", "c:clear", ",:view archived", "/:settings", "Shift+↑↓:reorder", "Alt+↑↓:dup"])
 
 
 def _render_main(
@@ -204,7 +204,7 @@ def _run_main_loop() -> None:
                     tasks = db.get_active_tasks()
                     hover -= 1
             elif key == term.KEY_ALT_ARROW_DOWN:
-                if tasks and len(tasks) < db.MAX_ACTIVE_TASKS:
+                if tasks and len(tasks) < db.get_max_tasks():
                     db.duplicate_task(tasks[hover]["id"], 1)
                     tasks = db.get_active_tasks()
                     hover += 1
@@ -221,7 +221,7 @@ def _run_main_loop() -> None:
                     edit_text = tasks[hover]["text"]
                     edit_cursor = len(edit_text)
             elif key == "a":
-                if len(tasks) < db.MAX_ACTIVE_TASKS:
+                if len(tasks) < db.get_max_tasks():
                     new_task = db.add_task("")
                     if new_task:
                         tasks = db.get_active_tasks()
@@ -246,6 +246,9 @@ def _run_main_loop() -> None:
                     db.toggle_done(tasks[hover]["id"])
             elif key == ",":
                 run_archive()
+                continue
+            elif key == "/":
+                run_settings()
                 continue
 
         elif mode == "confirm":
@@ -387,6 +390,153 @@ def _run_archive_loop() -> None:
                 mode = "normal"
                 confirm_action = ""
                 confirm_task_id = None
+
+
+def _render_settings(
+    hover: int,
+    mode: str = "normal",
+    edit_text: str = "",
+    edit_cursor: int = 0,
+    status_msg: str = "",
+) -> None:
+    term.clear_screen()
+
+    max_tasks = db.get_max_tasks()
+
+    header = Text("settings • ", style="bold")
+    header.append(Text("preferences", style="dim"))
+    console.print(header)
+    console.print(Text("─" * DIVIDER_WIDTH, style="dim"))
+    console.print()
+
+    # Max tasks row
+    is_hovered_max = hover == 0
+    prefix = "▸ " if is_hovered_max else "  "
+    max_line = Text(prefix)
+    if mode == "edit" and hover == 0:
+        before = edit_text[:edit_cursor]
+        after = edit_text[edit_cursor:]
+        max_line.append(Text("max tasks: ", style="cyan bold"))
+        max_line.append(Text(before, style="yellow bold"))
+        max_line.append(Text("█", style="yellow"))
+        max_line.append(Text(after, style="yellow bold"))
+    elif is_hovered_max:
+        max_line.append(Text("max tasks: ", style="cyan bold"))
+        max_line.append(Text(str(max_tasks), style="bold"))
+    else:
+        max_line.append(Text("max tasks: ", style="dim"))
+        max_line.append(Text(str(max_tasks), style="dim"))
+    console.print(max_line)
+
+    # Update row
+    is_hovered_update = hover == 1
+    prefix2 = "▸ " if is_hovered_update else "  "
+    update_line = Text(prefix2)
+    if is_hovered_update:
+        update_line.append(Text("update td", style="cyan bold"))
+    else:
+        update_line.append(Text("update td", style="dim"))
+    console.print(update_line)
+
+    if status_msg:
+        console.print()
+        console.print(Text(f"  {status_msg}", style="yellow bold"))
+
+    # Hints
+    if mode == "edit":
+        hint_text = "  " + " │ ".join(["Esc:cancel", "Enter:confirm"])
+    else:
+        hint_text = "  " + " │ ".join(["↑/k ↓/j:navigate", "e:edit", "Enter:select", "q:return"])
+    console.print()
+    console.print(Text("─" * DIVIDER_WIDTH, style="dim"))
+    console.print(Text(hint_text, style="dim"))
+
+
+def _run_settings_loop() -> None:
+    hover = 0
+    mode = "normal"
+    edit_text = ""
+    edit_cursor = 0
+    status_msg = ""
+    num_items = 2  # max_tasks, update
+
+    while True:
+        _render_settings(hover, mode, edit_text, edit_cursor, status_msg)
+        key = term.read_key()
+
+        if mode == "normal":
+            status_msg = ""
+            if key in ("q", term.KEY_ESC):
+                break
+            elif key in (term.KEY_ARROW_UP, "k"):
+                if hover > 0:
+                    hover -= 1
+            elif key in (term.KEY_ARROW_DOWN, "j"):
+                if hover < num_items - 1:
+                    hover += 1
+            elif key in (term.KEY_ENTER, "e"):
+                if hover == 0:
+                    mode = "edit"
+                    edit_text = str(db.get_max_tasks())
+                    edit_cursor = len(edit_text)
+                elif hover == 1:
+                    # Run update
+                    import subprocess
+                    result = subprocess.run(
+                        ["uv", "tool", "upgrade", "td"],
+                        capture_output=True, text=True, timeout=60,
+                    )
+                    if result.returncode == 0:
+                        status_msg = "✓ updated successfully"
+                    else:
+                        status_msg = f"✗ update failed: {result.stderr.strip().split(chr(10))[-1]}"
+
+        elif mode == "edit":
+            if key == term.KEY_ESC:
+                mode = "normal"
+                edit_text = ""
+                edit_cursor = 0
+            elif key == term.KEY_ENTER:
+                try:
+                    new_max = int(edit_text)
+                    if new_max < 1:
+                        raise ValueError
+                    db.set_max_tasks(new_max)
+                    status_msg = f"✓ max tasks set to {new_max}"
+                except ValueError:
+                    status_msg = "✗ must be a positive integer"
+                mode = "normal"
+                edit_text = ""
+                edit_cursor = 0
+            elif key == term.KEY_BACKSPACE:
+                if edit_cursor > 0:
+                    edit_text = edit_text[:edit_cursor - 1] + edit_text[edit_cursor:]
+                    edit_cursor -= 1
+            elif key == term.KEY_DELETE:
+                if edit_cursor < len(edit_text):
+                    edit_text = edit_text[:edit_cursor] + edit_text[edit_cursor + 1:]
+            elif key == term.KEY_ARROW_LEFT:
+                if edit_cursor > 0:
+                    edit_cursor -= 1
+            elif key == term.KEY_ARROW_RIGHT:
+                if edit_cursor < len(edit_text):
+                    edit_cursor += 1
+            elif key == term.KEY_HOME:
+                edit_cursor = 0
+            elif key == term.KEY_END:
+                edit_cursor = len(edit_text)
+            elif len(key) == 1 and key.isdigit():
+                edit_text = edit_text[:edit_cursor] + key + edit_text[edit_cursor:]
+                edit_cursor += 1
+
+
+def run_settings() -> None:
+    term.hide_cursor()
+    with term.raw_mode():
+        try:
+            _run_settings_loop()
+        finally:
+            term.show_cursor()
 
 
 def run_main() -> None:

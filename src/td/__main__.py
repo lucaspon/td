@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import os
 
-from .tui import run_main, run_archive
+from .tui import run_main, run_archive, run_settings
 
 
 def main() -> None:
@@ -11,8 +11,25 @@ def main() -> None:
         _run_dev()
     elif len(sys.argv) > 1 and sys.argv[1] == "archive":
         run_archive()
+    elif len(sys.argv) > 1 and sys.argv[1] == "update":
+        _run_update()
     else:
         run_main()
+
+
+def _run_update() -> None:
+    """Update td to the latest version from PyPI."""
+    import subprocess
+    print("Updating td...")
+    result = subprocess.run(
+        ["uv", "tool", "upgrade", "td"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if result.returncode == 0:
+        print("✓ td updated successfully")
+    else:
+        print(f"✗ update failed: {result.stderr.strip()}")
+        sys.exit(1)
 
 
 def _run_dev() -> None:
