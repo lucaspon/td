@@ -27,6 +27,7 @@ def _render_main(
     header.append(Text(" / ", style="dim"))
     header.append(Text(f"{done_count} completed", style="dim"))
     console.print(header)
+    console.print(Text("─" * len(f"td {open_count} open / {done_count} completed"), style="dim"))
     console.print()
 
     lines = []
