@@ -6,7 +6,7 @@ from pathlib import Path
 
 DB_PATH = Path.home() / ".td.db"
 
-MAX_ACTIVE_TASKS = 10
+MAX_ACTIVE_TASKS = 15
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
