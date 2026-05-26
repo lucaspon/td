@@ -165,6 +165,46 @@ def move_task(task_id: int, direction: int) -> None:
         conn.close()
 
 
+def duplicate_task(task_id: int, direction: int) -> dict | None:
+    """Duplicate a task. direction=-1 inserts above, direction=+1 inserts below."""
+    conn = _connect()
+    try:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status != 'archived'"
+        ).fetchone()[0]
+        if count >= MAX_ACTIVE_TASKS:
+            return None
+        row = conn.execute(
+            "SELECT text, status, position FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        # Shift positions to make room
+        target_pos = row["position"] + direction
+        if direction == -1:
+            # Inserting above: shift everything at target_pos and above up by 1
+            conn.execute(
+                "UPDATE tasks SET position = position + 1 WHERE position >= ? AND status != 'archived'",
+                (target_pos,),
+            )
+        else:
+            # Inserting below: shift everything after current position up by 1
+            conn.execute(
+                "UPDATE tasks SET position = position + 1 WHERE position > ? AND status != 'archived'",
+                (row["position"],),
+            )
+        now = _now_iso()
+        cursor = conn.execute(
+            "INSERT INTO tasks (text, status, position, created_at) VALUES (?, ?, ?, ?)",
+            (row["text"], row["status"], target_pos, now),
+        )
+        _reorder_positions(conn)
+        conn.commit()
+        return {"id": cursor.lastrowid, "text": row["text"], "status": row["status"], "position": target_pos}
+    finally:
+        conn.close()
+
+
 def _reorder_positions(conn: sqlite3.Connection) -> None:
     rows = conn.execute(
         "SELECT id FROM tasks WHERE status != 'archived' ORDER BY position"

@@ -15,6 +15,10 @@ console = Console()
 ESC = "\x1b"
 ARROW_UP = "\x1b[A"
 ARROW_DOWN = "\x1b[B"
+SHIFT_ARROW_UP = "\x1b[1;2A"
+SHIFT_ARROW_DOWN = "\x1b[1;2B"
+ALT_ARROW_UP = "\x1b[1;3A"
+ALT_ARROW_DOWN = "\x1b[1;3B"
 ENTER = "\n"  # ICRNL translates \r from terminal to \n in cbreak mode
 BACKSPACE = "\x7f"
 DELETE = "\x1b[3~"
@@ -112,7 +116,7 @@ def _render_main(
 
     console.print()
     if mode == "normal":
-        hint_parts = ["a:add", "Enter:edit", "d:delete", "Space:done", "c:clear", ",:archive", "q:quit"]
+        hint_parts = ["a:add", "e:edit", "d:delete", "Space:done", "c:clear", ",:archive", "Shift+↑↓:reorder", "Alt+↑↓:dup"]
     elif mode == "edit":
         hint_parts = ["Esc:cancel", "Enter:confirm"]
     elif mode == "confirm":
@@ -192,13 +196,31 @@ def run_main() -> None:
             if mode == "normal":
                 if key in ("q", ESC):
                     break
+                elif key == SHIFT_ARROW_UP:
+                    if tasks and hover > 0:
+                        db.move_task(tasks[hover]["id"], -1)
+                        hover -= 1
+                elif key == SHIFT_ARROW_DOWN:
+                    if tasks and hover < len(tasks) - 1:
+                        db.move_task(tasks[hover]["id"], 1)
+                        hover += 1
+                elif key == ALT_ARROW_UP:
+                    if tasks and hover > 0:
+                        db.duplicate_task(tasks[hover]["id"], -1)
+                        tasks = db.get_active_tasks()
+                        hover -= 1
+                elif key == ALT_ARROW_DOWN:
+                    if tasks and len(tasks) < db.MAX_ACTIVE_TASKS:
+                        db.duplicate_task(tasks[hover]["id"], 1)
+                        tasks = db.get_active_tasks()
+                        hover += 1
                 elif key in (ARROW_UP, "k"):
                     if hover > 0:
                         hover -= 1
                 elif key in (ARROW_DOWN, "j"):
                     if tasks and hover < len(tasks) - 1:
                         hover += 1
-                elif key == ENTER:
+                elif key in (ENTER, "e"):
                     if tasks:
                         mode = "edit"
                         edit_task_id = tasks[hover]["id"]
