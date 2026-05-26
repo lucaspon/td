@@ -120,7 +120,7 @@ def _render_main(
     elif mode == "edit":
         hint_parts = ["Esc:cancel", "Enter:confirm"]
     elif mode == "confirm":
-        hint_parts = ["y:confirm", "Esc/n:cancel"]
+        hint_parts = ["y/Enter:confirm", "Esc:cancel"]
     else:
         hint_parts = []
     console.print(Text("  " + " │ ".join(hint_parts), style="dim"))
@@ -258,7 +258,7 @@ def run_main() -> None:
                     continue
 
             elif mode == "confirm":
-                if key == "y":
+                if key in ("y", ENTER):
                     if confirm_action == "delete" and confirm_task_id is not None:
                         db.delete_task(confirm_task_id)
                         tasks = db.get_active_tasks()
@@ -269,8 +269,7 @@ def run_main() -> None:
                     mode = "normal"
                     confirm_action = ""
                     confirm_task_id = None
-                elif key in ("n", ESC, ENTER) or key in (ARROW_UP, ARROW_DOWN):
-                    # Cancel — any key besides 'y' cancels, but be explicit about common ones
+                else:
                     mode = "normal"
                     confirm_action = ""
                     confirm_task_id = None
