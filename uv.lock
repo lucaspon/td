@@ -51,18 +51,17 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "rich" },
-]
-
-[package.dev-dependencies]
-dev = [
     { name = "watchdog" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "rich", specifier = ">=15.0.0" }]
+requires-dist = [
+    { name = "rich", specifier = ">=15.0.0" },
+    { name = "watchdog", specifier = ">=6.0.0" },
+]
 
 [package.metadata.requires-dev]
-dev = [{ name = "watchdog", specifier = ">=6.0.0" }]
+dev = []
 
 [[package]]
 name = "watchdog"

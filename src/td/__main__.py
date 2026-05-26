@@ -17,17 +17,13 @@ def main() -> None:
 
 def _run_dev() -> None:
     """Watch src/td/ for changes and restart the TUI automatically."""
-    try:
-        from watchdog.observers import Observer
-        from watchdog.events import FileSystemEventHandler
-    except ImportError:
-        print("watchdog is required for --dev mode. Install it with: uv add --dev watchdog")
-        sys.exit(1)
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler
 
     import subprocess
     import time
 
-    src_dir = os.path.join(os.path.dirname(__file__))
+    src_dir = os.path.dirname(__file__)
 
     class RestartHandler(FileSystemEventHandler):
         def __init__(self):
@@ -47,14 +43,14 @@ def _run_dev() -> None:
     observer.start()
 
     print("td --dev: watching for changes... (Ctrl+C to stop)")
-    process = subprocess.run([sys.executable, "-m", "td"])
+    subprocess.run(["uv", "run", "td"])
     try:
         while True:
             time.sleep(0.5)
             if handler.changed:
                 handler.changed = False
                 print("\n⟳  Change detected, restarting...\n")
-                process = subprocess.run([sys.executable, "-m", "td"])
+                subprocess.run(["uv", "run", "td"])
     except KeyboardInterrupt:
         pass
     finally:
