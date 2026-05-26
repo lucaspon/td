@@ -109,7 +109,7 @@ def _render_main(
 
     console.print()
     if mode == "normal":
-        hint_parts = ["n:add", "Enter:edit", "d:delete", "Space:done", "a:archive", "q:quit"]
+        hint_parts = ["a:add", "Enter:edit", "d:delete", "Space:done", "c:clear", ",:archive", "q:quit"]
     elif mode == "edit":
         hint_parts = ["Esc:cancel", "Enter:confirm"]
     elif mode == "confirm":
@@ -165,7 +165,7 @@ def run_main() -> None:
                 hover = 0
 
             if mode == "confirm" and confirm_action == "archive":
-                confirm_msg = "Archive all done tasks? y/n"
+                confirm_msg = "Clear all done tasks? y/n"
             elif mode == "confirm" and confirm_action == "delete":
                 task_text = next((t["text"] for t in tasks if t["id"] == confirm_task_id), "")
                 confirm_msg = f'Delete "{task_text}"? y/n'
@@ -190,7 +190,7 @@ def run_main() -> None:
                         mode = "edit"
                         edit_task_id = tasks[hover]["id"]
                         edit_text = tasks[hover]["text"]
-                elif key == "n":
+                elif key == "a":
                     if len(tasks) < db.MAX_ACTIVE_TASKS:
                         new_task = db.add_task("")
                         if new_task:
@@ -204,15 +204,23 @@ def run_main() -> None:
                         confirm_action = "delete"
                         confirm_task_id = tasks[hover]["id"]
                         mode = "confirm"
-                elif key == " ":
-                    if tasks:
-                        db.toggle_done(tasks[hover]["id"])
-                elif key == "a":
+                elif key == "c":
                     done_count = sum(1 for t in tasks if t["status"] == "done")
                     if done_count > 0:
                         confirm_action = "archive"
                         confirm_task_id = None
                         mode = "confirm"
+                elif key == " ":
+                    if tasks:
+                        db.toggle_done(tasks[hover]["id"])
+                elif key == ",":
+                    # Switch to archive view
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                    _show_cursor()
+                    run_archive()
+                    _hide_cursor()
+                    tty.setcbreak(fd)
+                    continue
 
             elif mode == "confirm":
                 if key == "y":
