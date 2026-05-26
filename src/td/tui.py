@@ -80,7 +80,6 @@ def _render_main(
     hint_text = "  " + " │ ".join(hint_parts) if mode != "normal" else _normal_hint_text()
     console.print()
     console.print(Text("─" * DIVIDER_WIDTH, style="dim"))
-    console.print()
     console.print(Text(hint_text, style="dim"))
 
 
@@ -154,7 +153,6 @@ def _render_archive(
         hint_text = archive_hint_text
     console.print()
     console.print(Text("─" * DIVIDER_WIDTH, style="dim"))
-    console.print()
     console.print(Text(hint_text, style="dim"))
 
 
