@@ -22,12 +22,12 @@ def _render_main(
 
     open_count = sum(1 for t in tasks if t["status"] == "active")
     done_count = sum(1 for t in tasks if t["status"] == "done")
-    header = Text("td ", style="bold")
+    header = Text("td • ", style="bold")
     header.append(Text(f"{open_count} open", style="dim"))
     header.append(Text(" / ", style="dim"))
     header.append(Text(f"{done_count} completed", style="dim"))
     console.print(header)
-    console.print(Text("─" * len(f"td {open_count} open / {done_count} completed"), style="dim"))
+    console.print(Text("─" * len(f"td • {open_count} open / {done_count} completed"), style="dim"))
     console.print()
 
     lines = []
