@@ -103,7 +103,7 @@ def _run_update() -> None:
     import subprocess
     print("Updating td...")
     result = subprocess.run(
-        ["uv", "tool", "upgrade", "lucaspon-td"],
+        ["uv", "tool", "upgrade", "td-task"],
         capture_output=True, text=True, timeout=60,
     )
     if result.returncode == 0:

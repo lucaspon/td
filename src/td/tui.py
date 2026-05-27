@@ -586,7 +586,7 @@ def _run_settings_loop() -> None:
                     # Run update
                     import subprocess
                     result = subprocess.run(
-                        ["uv", "tool", "upgrade", "lucaspon-td"],
+                        ["uv", "tool", "upgrade", "td-task"],
                         capture_output=True, text=True, timeout=60,
                     )
                     if result.returncode == 0:
