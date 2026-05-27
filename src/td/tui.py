@@ -512,7 +512,10 @@ def _render_settings(
 
     # Hints
     if mode == "edit":
-        hint_text = "  " + " │ ".join(["Esc:cancel", "Enter:confirm"])
+        if hover == 0:
+            hint_text = "  " + " │ ".join(["Esc:cancel", "Enter:confirm", "↑/↓:adjust value"])
+        else:
+            hint_text = "  " + " │ ".join(["Esc:cancel", "Enter:confirm"])
     else:
         hint_text = "  " + " │ ".join(["↑/k ↓/j:navigate", "e:edit", "Enter:select", "q:return"])
     console.print()
@@ -602,15 +605,31 @@ def _run_settings_loop() -> None:
             elif key == term.KEY_ENTER:
                 try:
                     new_max = int(edit_text)
-                    if new_max < 1:
+                    if new_max < 3 or new_max > 15:
                         raise ValueError
                     db.set_max_tasks(new_max)
                     status_msg = f"✓ max tasks set to {new_max}"
                 except ValueError:
-                    status_msg = "✗ must be a positive integer"
+                    status_msg = "✗ must be an integer between 3 and 15"
                 mode = "normal"
                 edit_text = ""
                 edit_cursor = 0
+            elif hover == 0 and key == term.KEY_ARROW_UP:
+                try:
+                    val = int(edit_text) if edit_text.strip() else 3
+                except ValueError:
+                    val = 3
+                new_val = min(15, val + 1)
+                edit_text = str(new_val)
+                edit_cursor = len(edit_text)
+            elif hover == 0 and key == term.KEY_ARROW_DOWN:
+                try:
+                    val = int(edit_text) if edit_text.strip() else 3
+                except ValueError:
+                    val = 3
+                new_val = max(3, val - 1)
+                edit_text = str(new_val)
+                edit_cursor = len(edit_text)
             elif key == term.KEY_BACKSPACE:
                 if edit_cursor > 0:
                     edit_text = edit_text[:edit_cursor - 1] + edit_text[edit_cursor:]
