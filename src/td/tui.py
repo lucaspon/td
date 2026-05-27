@@ -593,7 +593,11 @@ def _run_settings_loop() -> None:
                         capture_output=True, text=True, timeout=60,
                     )
                     if result.returncode == 0:
-                        status_msg = "✓ updated successfully"
+                        output = (result.stdout + result.stderr).strip()
+                        if "Nothing to upgrade" in output:
+                            status_msg = "already up-to-date."
+                        else:
+                            status_msg = "✓ updated successfully"
                     else:
                         status_msg = f"✗ update failed: {result.stderr.strip().split(chr(10))[-1]}"
 

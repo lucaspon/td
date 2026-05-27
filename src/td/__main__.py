@@ -154,7 +154,11 @@ def _run_update() -> None:
         capture_output=True, text=True, timeout=60,
     )
     if result.returncode == 0:
-        print("✓ td updated successfully")
+        output = (result.stdout + result.stderr).strip()
+        if "Nothing to upgrade" in output:
+            print("already up-to-date.")
+        else:
+            print("✓ td updated successfully")
     else:
         print(f"✗ update failed: {result.stderr.strip()}")
         sys.exit(1)
