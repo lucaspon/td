@@ -64,7 +64,7 @@ def _ensure_unlocked() -> bool:
 
 
 def _normal_hint_text() -> str:
-    return "  " + " │ ".join(["a:add", "e:edit", "d:delete", "Space:done", "c:clear", ",:view archived", "/:settings", "Ctrl+↑↓:reorder", "Alt+↑↓:dup"])
+    return "  " + " │ ".join(["a:add", "e:edit", "d:delete", "Space:done", "s:star", "c:clear", ",:view archived", "/:settings", "Ctrl+↑↓:reorder", "Alt+↑↓:dup"])
 
 
 def _render_main(
@@ -88,12 +88,17 @@ def _render_main(
     console.print()
 
     lines = []
+    prev_starred = False
     for i, task in enumerate(tasks):
         is_hovered = i == hover
         is_done = task["status"] == "done"
+        is_starred = task.get("starred", 0) == 1
+
+        if i > 0 and prev_starred and not is_starred:
+            lines.append(Text(""))
 
         prefix = "▸ " if is_hovered else "  "
-        marker = "✓" if is_done else "○"
+        marker = "★" if is_starred else ("✓" if is_done else "○")
 
         text = task["text"]
         if not text:
@@ -101,15 +106,25 @@ def _render_main(
         elif is_done:
             line_text = Text(text, style="strike dim")
         elif is_hovered:
-            line_text = Text(text, style="cyan bold")
+            if is_starred:
+                line_text = Text(text, style="bold yellow")
+            else:
+                line_text = Text(text, style="cyan bold")
         else:
-            line_text = Text(text)
+            if is_starred:
+                line_text = Text(text, style="bold yellow")
+            else:
+                line_text = Text(text)
 
         line = Text(prefix)
-        line.append(marker)
+        if is_starred:
+            line.append(Text(marker, style="bold yellow"))
+        else:
+            line.append(marker)
         line.append(" ")
         line.append(line_text)
         lines.append(line)
+        prev_starred = is_starred
 
     if not tasks:
         lines.append(Text("  No tasks. Press a to add one.", style="dim"))
@@ -300,6 +315,9 @@ def _run_main_loop() -> None:
             elif key == " ":
                 if tasks:
                     db.toggle_done(tasks[hover]["id"])
+            elif key == "s":
+                if tasks:
+                    db.toggle_starred(tasks[hover]["id"])
             elif key == ",":
                 run_archive()
                 continue
@@ -456,6 +474,7 @@ def _render_settings(
     term.clear_screen()
 
     max_tasks = db.get_max_tasks()
+    max_starred = db.get_max_starred_tasks()
 
     header = Text("settings • ", style="bold")
     header.append(Text("preferences", style="dim"))
@@ -483,8 +502,28 @@ def _render_settings(
         max_line.append(Text(str(max_tasks), style="dim"))
     console.print(max_line)
 
+    # Max starred tasks row
+    is_hovered_starred = hover == 1
+    prefix_starred = "▸ " if is_hovered_starred else "  "
+    starred_line = Text(prefix_starred)
+    if mode == "edit" and hover == 1:
+        starred_line = Text(prefix_starred)
+        starred_line.append(Text("max starred tasks: ", style="cyan bold"))
+        starred_line.append(Text(edit_text[:edit_cursor], style="yellow bold"))
+        char_under = edit_text[edit_cursor] if edit_cursor < len(edit_text) else " "
+        starred_line.append(Text(char_under, style="reverse yellow bold"))
+        if edit_cursor < len(edit_text):
+            starred_line.append(Text(edit_text[edit_cursor + 1:], style="yellow bold"))
+    elif is_hovered_starred:
+        starred_line.append(Text("max starred tasks: ", style="cyan bold"))
+        starred_line.append(Text(str(max_starred), style="bold"))
+    else:
+        starred_line.append(Text("max starred tasks: ", style="dim"))
+        starred_line.append(Text(str(max_starred), style="dim"))
+    console.print(starred_line)
+
     # Encryption row
-    is_hovered_enc = hover == 1
+    is_hovered_enc = hover == 2
     prefix_enc = "▸ " if is_hovered_enc else "  "
     enc_line = Text(prefix_enc)
     enc_status = "enabled" if db.is_encryption_enabled() else "disabled"
@@ -497,7 +536,7 @@ def _render_settings(
     console.print(enc_line)
 
     # Update row
-    is_hovered_update = hover == 2
+    is_hovered_update = hover == 3
     prefix2 = "▸ " if is_hovered_update else "  "
     update_line = Text(prefix2)
     if is_hovered_update:
@@ -512,7 +551,7 @@ def _render_settings(
 
     # Hints
     if mode == "edit":
-        if hover == 0:
+        if hover in (0, 1):
             hint_text = "  " + " │ ".join(["Esc:cancel", "Enter:confirm", "↑/↓:adjust value"])
         else:
             hint_text = "  " + " │ ".join(["Esc:cancel", "Enter:confirm"])
@@ -529,7 +568,7 @@ def _run_settings_loop() -> None:
     edit_text = ""
     edit_cursor = 0
     status_msg = ""
-    num_items = 3  # max_tasks, encryption, update
+    num_items = 4  # max_tasks, max_starred_tasks, encryption, update
 
     while True:
         _render_settings(hover, mode, edit_text, edit_cursor, status_msg)
@@ -551,6 +590,10 @@ def _run_settings_loop() -> None:
                     edit_text = str(db.get_max_tasks())
                     edit_cursor = len(edit_text)
                 elif hover == 1:
+                    mode = "edit"
+                    edit_text = str(db.get_max_starred_tasks())
+                    edit_cursor = len(edit_text)
+                elif hover == 2:
                     # Toggle encryption
                     if not db.is_encryption_enabled():
                         # Prompt warning
@@ -585,7 +628,7 @@ def _run_settings_loop() -> None:
                                 status_msg = "✓ encryption disabled successfully"
                             else:
                                 status_msg = "✗ incorrect password"
-                elif hover == 2:
+                elif hover == 3:
                     # Run update
                     import subprocess
                     result = subprocess.run(
@@ -623,14 +666,26 @@ def _run_settings_loop() -> None:
                 edit_text = ""
                 edit_cursor = 0
             elif key == term.KEY_ENTER:
-                try:
-                    new_max = int(edit_text)
-                    if new_max < 3 or new_max > 15:
-                        raise ValueError
-                    db.set_max_tasks(new_max)
-                    status_msg = f"✓ max tasks set to {new_max}"
-                except ValueError:
-                    status_msg = "✗ must be an integer between 3 and 15"
+                if hover == 0:
+                    try:
+                        new_max = int(edit_text)
+                        if new_max < 3 or new_max > 15:
+                            raise ValueError
+                        db.set_max_tasks(new_max)
+                        status_msg = f"✓ max tasks set to {new_max}"
+                    except ValueError:
+                        status_msg = "✗ must be an integer between 3 and 15"
+                elif hover == 1:
+                    try:
+                        new_max = int(edit_text)
+                        cap = max(10, db.get_max_tasks())
+                        if new_max < 1 or new_max > cap:
+                            raise ValueError
+                        db.set_max_starred_tasks(new_max)
+                        status_msg = f"✓ max starred tasks set to {new_max}"
+                    except ValueError:
+                        cap = max(10, db.get_max_tasks())
+                        status_msg = f"✗ must be an integer between 1 and {cap}"
                 mode = "normal"
                 edit_text = ""
                 edit_cursor = 0
@@ -648,6 +703,23 @@ def _run_settings_loop() -> None:
                 except ValueError:
                     val = 3
                 new_val = max(3, val - 1)
+                edit_text = str(new_val)
+                edit_cursor = len(edit_text)
+            elif hover == 1 and key == term.KEY_ARROW_UP:
+                try:
+                    val = int(edit_text) if edit_text.strip() else 1
+                except ValueError:
+                    val = 1
+                cap = max(10, db.get_max_tasks())
+                new_val = min(cap, val + 1)
+                edit_text = str(new_val)
+                edit_cursor = len(edit_text)
+            elif hover == 1 and key == term.KEY_ARROW_DOWN:
+                try:
+                    val = int(edit_text) if edit_text.strip() else 1
+                except ValueError:
+                    val = 1
+                new_val = max(1, val - 1)
                 edit_text = str(new_val)
                 edit_cursor = len(edit_text)
             elif key == term.KEY_BACKSPACE:

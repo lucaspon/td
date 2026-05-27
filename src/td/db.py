@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     position    INTEGER NOT NULL,
     created_at  TEXT NOT NULL,
     done_at     TEXT,
-    archived_at TEXT
+    archived_at TEXT,
+    starred     INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -180,6 +181,12 @@ def _connect() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
+    # Migration: check if 'starred' column exists in tasks table
+    cursor = conn.execute("PRAGMA table_info(tasks)")
+    columns = [row["name"] for row in cursor.fetchall()]
+    if "starred" not in columns:
+        conn.execute("ALTER TABLE tasks ADD COLUMN starred INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
     return conn
 
 
@@ -210,7 +217,7 @@ def get_active_tasks() -> list[dict]:
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT id, text, status, position FROM tasks "
+            "SELECT id, text, status, position, starred FROM tasks "
             "WHERE status != 'archived' ORDER BY position"
         ).fetchall()
         tasks = []
@@ -256,11 +263,11 @@ def add_task(text: str) -> dict | None:
         now = _now_iso()
         db_text = _encrypt(text) if is_encryption_enabled() else text
         cursor = conn.execute(
-            "INSERT INTO tasks (text, position, created_at) VALUES (?, ?, ?)",
+            "INSERT INTO tasks (text, position, created_at, starred) VALUES (?, ?, ?, 0)",
             (db_text, max_pos + 1, now),
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "text": text, "status": "active", "position": max_pos + 1}
+        return {"id": cursor.lastrowid, "text": text, "status": "active", "position": max_pos + 1, "starred": 0}
     finally:
         conn.close()
 
@@ -333,24 +340,27 @@ def move_task(task_id: int, direction: int) -> None:
     conn = _connect()
     try:
         tasks = conn.execute(
-            "SELECT id, position FROM tasks WHERE status != 'archived' ORDER BY position"
+            "SELECT id, position, starred FROM tasks WHERE status != 'archived' ORDER BY position"
         ).fetchall()
-        task_map = {t["id"]: t["position"] for t in tasks}
+        task_map = {t["id"]: (t["position"], t["starred"]) for t in tasks}
         if task_id not in task_map:
             return
-        current_pos = task_map[task_id]
+        current_pos, current_starred = task_map[task_id]
         # Find the task at the target position
         target_pos = current_pos + direction
         other_id = None
-        for tid, pos in task_map.items():
+        other_starred = None
+        for tid, (pos, starred) in task_map.items():
             if pos == target_pos:
                 other_id = tid
+                other_starred = starred
                 break
         if other_id is None:
             return
-        conn.execute("UPDATE tasks SET position = ? WHERE id = ?", (target_pos, task_id))
-        conn.execute("UPDATE tasks SET position = ? WHERE id = ?", (current_pos, other_id))
-        conn.commit()
+        if current_starred == other_starred:
+            conn.execute("UPDATE tasks SET position = ? WHERE id = ?", (target_pos, task_id))
+            conn.execute("UPDATE tasks SET position = ? WHERE id = ?", (current_pos, other_id))
+            conn.commit()
     finally:
         conn.close()
 
@@ -365,7 +375,7 @@ def duplicate_task(task_id: int, direction: int) -> dict | None:
         if count >= get_max_tasks():
             return None
         row = conn.execute(
-            "SELECT text, status, position FROM tasks WHERE id = ?", (task_id,)
+            "SELECT text, status, position, starred FROM tasks WHERE id = ?", (task_id,)
         ).fetchone()
         if row is None:
             return None
@@ -387,12 +397,12 @@ def duplicate_task(task_id: int, direction: int) -> dict | None:
         db_text = row["text"]
         plaintext = _decrypt(db_text) if is_encryption_enabled() else db_text
         cursor = conn.execute(
-            "INSERT INTO tasks (text, status, position, created_at) VALUES (?, ?, ?, ?)",
-            (db_text, row["status"], target_pos, now),
+            "INSERT INTO tasks (text, status, position, created_at, starred) VALUES (?, ?, ?, ?, ?)",
+            (db_text, row["status"], target_pos, now, row["starred"]),
         )
         _reorder_positions(conn)
         conn.commit()
-        return {"id": cursor.lastrowid, "text": plaintext, "status": row["status"], "position": target_pos}
+        return {"id": cursor.lastrowid, "text": plaintext, "status": row["status"], "position": target_pos, "starred": row["starred"]}
     finally:
         conn.close()
 
@@ -444,9 +454,58 @@ def get_completed_count() -> int:
         conn.close()
 
 
+DEFAULT_MAX_STARRED_TASKS = 3
+
+
+def get_max_starred_tasks() -> int:
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'max_starred_tasks'").fetchone()
+        if row:
+            return int(row["value"])
+        return DEFAULT_MAX_STARRED_TASKS
+    finally:
+        conn.close()
+
+
+def set_max_starred_tasks(value: int) -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('max_starred_tasks', ?)",
+            (str(value),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def toggle_starred(task_id: int) -> bool:
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT starred FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            return False
+        if row["starred"] == 0:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE status != 'archived' AND starred = 1"
+            ).fetchone()[0]
+            if count >= get_max_starred_tasks():
+                return False
+            new_starred = 1
+        else:
+            new_starred = 0
+        conn.execute("UPDATE tasks SET starred = ? WHERE id = ?", (new_starred, task_id))
+        _reorder_positions(conn)
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
 def _reorder_positions(conn: sqlite3.Connection) -> None:
     rows = conn.execute(
-        "SELECT id FROM tasks WHERE status != 'archived' ORDER BY position"
+        "SELECT id FROM tasks WHERE status != 'archived' ORDER BY starred DESC, position"
     ).fetchall()
     for idx, row in enumerate(rows):
         conn.execute("UPDATE tasks SET position = ? WHERE id = ?", (idx, row["id"]))

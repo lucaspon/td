@@ -126,14 +126,26 @@ def _run_list() -> None:
         console.print(Text("  No tasks found.", style="dim"))
         return
         
+    prev_starred = False
     for i, task in enumerate(tasks, 1):
         is_done = task["status"] == "done"
-        marker = "✓" if is_done else "○"
+        is_starred = task.get("starred", 0) == 1
+        
+        if i > 1 and prev_starred and not is_starred:
+            console.print()
+            
+        if is_starred:
+            marker = "★"
+        else:
+            marker = "✓" if is_done else "○"
         
         text = task["text"]
         if is_done:
             line_text = Text(text, style="strike dim")
             marker_text = Text(marker, style="green bold")
+        elif is_starred:
+            line_text = Text(text, style="bold yellow")
+            marker_text = Text(marker, style="bold yellow")
         else:
             line_text = Text(text)
             marker_text = Text(marker, style="yellow")
@@ -143,6 +155,7 @@ def _run_list() -> None:
         line.append(" ")
         line.append(line_text)
         console.print(line)
+        prev_starred = is_starred
 
 
 def _run_update() -> None:
