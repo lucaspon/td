@@ -64,7 +64,7 @@ def _ensure_unlocked() -> bool:
 
 
 def _normal_hint_text() -> str:
-    return "  " + " │ ".join(["a:add", "e:edit", "d:delete", "Space:done", "c:clear", ",:view archived", "/:settings", "Shift+↑↓:reorder", "Alt+↑↓:dup"])
+    return "  " + " │ ".join(["a:add", "e:edit", "d:delete", "Space:done", "c:clear", ",:view archived", "/:settings", "Ctrl+↑↓:reorder", "Alt+↑↓:dup"])
 
 
 def _render_main(
@@ -246,11 +246,11 @@ def _run_main_loop() -> None:
         if mode == "normal":
             if key in ("q", term.KEY_ESC):
                 break
-            elif key == term.KEY_SHIFT_ARROW_UP:
+            elif key in (term.KEY_SHIFT_ARROW_UP, term.KEY_CTRL_ARROW_UP):
                 if tasks and hover > 0:
                     db.move_task(tasks[hover]["id"], -1)
                     hover -= 1
-            elif key == term.KEY_SHIFT_ARROW_DOWN:
+            elif key in (term.KEY_SHIFT_ARROW_DOWN, term.KEY_CTRL_ARROW_DOWN):
                 if tasks and hover < len(tasks) - 1:
                     db.move_task(tasks[hover]["id"], 1)
                     hover += 1
@@ -586,7 +586,7 @@ def _run_settings_loop() -> None:
                     # Run update
                     import subprocess
                     result = subprocess.run(
-                        ["uv", "tool", "upgrade", "td"],
+                        ["uv", "tool", "upgrade", "lucaspon-td"],
                         capture_output=True, text=True, timeout=60,
                     )
                     if result.returncode == 0:
