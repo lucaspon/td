@@ -7,18 +7,65 @@ from .tui import run_main, run_archive, run_settings
 
 
 def main() -> None:
-    if "--dev" in sys.argv:
+    if "-h" in sys.argv or "--help" in sys.argv or (len(sys.argv) > 1 and sys.argv[1] in ("help", "-help", "--help")):
+        _run_help()
+    elif "--dev" in sys.argv:
         _run_dev()
-    elif len(sys.argv) > 1 and sys.argv[1] == "archive":
+    elif len(sys.argv) > 1 and sys.argv[1] in ("archive", "-archive", "--archive"):
         run_archive()
-    elif len(sys.argv) > 1 and sys.argv[1] == "update":
+    elif len(sys.argv) > 1 and sys.argv[1] in ("update", "-update", "--update"):
         _run_update()
-    elif len(sys.argv) > 1 and sys.argv[1] == "add":
+    elif len(sys.argv) > 1 and sys.argv[1] in ("add", "-add", "--add"):
         _run_add()
-    elif len(sys.argv) > 1 and sys.argv[1] == "list":
+    elif len(sys.argv) > 1 and sys.argv[1] in ("list", "-list", "--list"):
         _run_list()
     else:
         run_main()
+
+
+def _run_help() -> None:
+    from rich.console import Console
+    from rich.text import Text
+    from rich.table import Table
+
+    console = Console()
+    
+    header = Text("td • ", style="bold cyan")
+    header.append(Text("minimal TUI todo app", style="italic dim"))
+    console.print(header)
+    console.print(Text("─" * 40, style="dim"))
+    console.print()
+    
+    console.print(Text("Usage:", style="bold yellow"))
+    console.print("  td [command] [options]", markup=False)
+    console.print()
+    
+    console.print(Text("Commands:", style="bold yellow"))
+    
+    commands_table = Table.grid(padding=(0, 2))
+    commands_table.add_column(style="green")
+    commands_table.add_column()
+    
+    commands_table.add_row("  (default)", "Launch the interactive TUI todo app")
+    commands_table.add_row("  add <text>", "Add a new task")
+    commands_table.add_row("  list", "List all active tasks in the terminal")
+    commands_table.add_row("  archive", "Open the TUI directly in the archive view")
+    commands_table.add_row("  update", "Update td to the latest version from PyPI")
+    
+    console.print(commands_table)
+    console.print()
+    
+    console.print(Text("Options:", style="bold yellow"))
+    
+    options_table = Table.grid(padding=(0, 2))
+    options_table.add_column(style="green")
+    options_table.add_column()
+    
+    options_table.add_row("  --dev", "Watch source files and restart TUI automatically")
+    options_table.add_row("  -h, --help", "Show this help message and exit")
+    
+    console.print(options_table)
+    console.print()
 
 
 def _cli_ensure_unlocked() -> None:
