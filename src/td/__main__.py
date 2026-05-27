@@ -159,9 +159,27 @@ def _run_update() -> None:
             print("already up-to-date.")
         else:
             print("✓ td updated successfully")
+            _print_changelog()
     else:
         print(f"✗ update failed: {result.stderr.strip()}")
         sys.exit(1)
+
+
+def _print_changelog() -> None:
+    import os
+    from rich.console import Console
+    from rich.markdown import Markdown
+
+    changelog_path = os.path.join(os.path.dirname(__file__), "CHANGELOG.md")
+    if os.path.exists(changelog_path):
+        try:
+            with open(changelog_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            console = Console()
+            console.print()
+            console.print(Markdown(content))
+        except Exception:
+            pass
 
 
 def _run_dev() -> None:

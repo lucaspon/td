@@ -598,6 +598,22 @@ def _run_settings_loop() -> None:
                             status_msg = "already up-to-date."
                         else:
                             status_msg = "✓ updated successfully"
+                            term.clear_screen()
+                            console.print(Text("✓ td updated successfully!", style="green bold"))
+                            console.print()
+                            import os
+                            from rich.markdown import Markdown
+                            changelog_path = os.path.join(os.path.dirname(__file__), "CHANGELOG.md")
+                            if os.path.exists(changelog_path):
+                                try:
+                                    with open(changelog_path, "r", encoding="utf-8") as f:
+                                        content = f.read()
+                                    console.print(Markdown(content))
+                                except Exception:
+                                    pass
+                            console.print()
+                            console.print(Text("Press any key to return to settings...", style="dim"))
+                            term.read_key()
                     else:
                         status_msg = f"✗ update failed: {result.stderr.strip().split(chr(10))[-1]}"
 
