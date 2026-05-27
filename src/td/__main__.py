@@ -95,7 +95,6 @@ def _run_list() -> None:
         line.append(marker_text)
         line.append(" ")
         line.append(line_text)
-        line.append(f" (id: {task['id']})", style="dim")
         console.print(line)
 
 
