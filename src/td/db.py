@@ -282,10 +282,14 @@ def toggle_done(task_id: int) -> None:
         if row is None:
             return
         if row["status"] == "active":
+            max_pos = conn.execute(
+                "SELECT COALESCE(MAX(position), -1) FROM tasks WHERE status != 'archived'"
+            ).fetchone()[0]
             conn.execute(
-                "UPDATE tasks SET status = 'done', done_at = ? WHERE id = ?",
-                (_now_iso(), task_id),
+                "UPDATE tasks SET status = 'done', done_at = ?, position = ? WHERE id = ?",
+                (_now_iso(), max_pos + 1, task_id),
             )
+            _reorder_positions(conn)
         elif row["status"] == "done":
             conn.execute(
                 "UPDATE tasks SET status = 'active', done_at = NULL WHERE id = ?",
