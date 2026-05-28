@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.3]
+- Add vertical Lists Menu screen to view and manage lists vertically with smooth screen transitions.
+- Support inline list creation, list renaming, deletion, and position reordering in the Lists Menu view.
+- Add list-scoped max tasks limits that can be edited in settings.
+- Polish task editing colors: preserve yellow for starred tasks and bold cyan/blue for normal tasks.
+- Add JSON database backup export and import utilities directly in the TUI preference settings menu.
+- Enforce explicit list name validation on CLI commands (`list`, `add`, `archive`) via `-l` / `--list`.
+- Default to "main" list on clean installation / first usage.
+- Add "l:view lists" and "q:quit" hints, allowing immediate exit on Esc/q.
+
 ## [0.1.2]
 - Add support for `-h` / `--help` CLI help menus using Rich formatting.
 - Add command aliases allowing prefix hyphens (e.g. `td -add`, `td -list`).

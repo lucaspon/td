@@ -6,21 +6,76 @@ import os
 from .tui import run_main, run_archive, run_settings
 
 
+def _parse_list_arg() -> tuple[str, bool, list[str]]:
+    """
+    Parse list argument from sys.argv and return (list_name, has_list_arg, cleaned_args).
+    This handles --list=xxx, -l=xxx, --list xxx, and -l xxx.
+    """
+    list_name = "main"
+    has_list_arg = False
+    cleaned_args = []
+
+    i = 0
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg.startswith("--list="):
+            list_name = arg.split("=", 1)[1].strip() or "main"
+            has_list_arg = True
+        elif arg.startswith("-l="):
+            list_name = arg.split("=", 1)[1].strip() or "main"
+            has_list_arg = True
+        elif arg in ("--list", "-l"):
+            has_list_arg = True
+            if i + 1 < len(sys.argv):
+                list_name = sys.argv[i + 1].strip() or "main"
+                i += 1  # Skip the value
+            else:
+                list_name = "main"
+        else:
+            cleaned_args.append(arg)
+        i += 1
+    return list_name, has_list_arg, cleaned_args
+
+
 def main() -> None:
-    if "-h" in sys.argv or "--help" in sys.argv or (len(sys.argv) > 1 and sys.argv[1] in ("help", "-help", "--help")):
-        _run_help()
-    elif "--dev" in sys.argv:
-        _run_dev()
-    elif len(sys.argv) > 1 and sys.argv[1] in ("archive", "-archive", "--archive"):
-        run_archive()
-    elif len(sys.argv) > 1 and sys.argv[1] in ("update", "-update", "--update"):
-        _run_update()
-    elif len(sys.argv) > 1 and sys.argv[1] in ("add", "-add", "--add"):
-        _run_add()
-    elif len(sys.argv) > 1 and sys.argv[1] in ("list", "-list", "--list"):
-        _run_list()
-    else:
-        run_main()
+    try:
+        list_name, has_list, args = _parse_list_arg()
+
+        if "-h" in args or "--help" in args or (len(args) > 1 and args[1] in ("help", "-help", "--help")):
+            _run_help()
+        elif "--dev" in args:
+            _run_dev()
+        elif len(args) > 1 and args[1] in ("archive", "-archive", "--archive"):
+            if not has_list:
+                print("✗ Error: list name is required. Pass list name with -l <name> or --list <name>.")
+                sys.exit(1)
+            run_archive(list_name, lock_list=has_list)
+        elif len(args) > 1 and args[1] in ("update", "-update", "--update"):
+            _run_update()
+        elif len(args) > 1 and args[1] in ("add", "-add", "--add"):
+            if not has_list:
+                print("✗ Error: list name is required. Pass list name with -l <name> or --list <name>.")
+                sys.exit(1)
+            _run_add(list_name, args)
+        elif len(args) > 1 and args[1] in ("list", "-list", "--list"):
+            if not has_list:
+                print("✗ Error: list name is required. Pass list name with -l <name> or --list <name>.")
+                sys.exit(1)
+            _run_list(list_name)
+        elif len(args) > 1 and args[1] in ("export", "-export", "--export"):
+            _run_export(args)
+        elif len(args) > 1 and args[1] in ("import", "-import", "--import"):
+            _run_import(args)
+        else:
+            from . import db
+            lists = db.get_all_lists()
+            if not lists:
+                db.create_list("main")
+                lists = ["main"]
+            active_list = list_name if has_list else lists[0]
+            run_main(active_list, lock_list=has_list)
+    except KeyboardInterrupt:
+        sys.exit(0)
 
 
 def _run_help() -> None:
@@ -31,13 +86,22 @@ def _run_help() -> None:
     console = Console()
     
     header = Text("td • ", style="bold cyan")
-    header.append(Text("minimal TUI todo app", style="italic dim"))
+    header.append(Text("minimal TUI & CLI multi-list todo manager", style="italic dim"))
     console.print(header)
-    console.print(Text("─" * 40, style="dim"))
+    console.print(Text("─" * 60, style="dim"))
+    console.print()
+    
+    console.print(Text("Description for LLMs & Users:", style="bold yellow"))
+    console.print(
+        "  `td` is a production-grade terminal todo application featuring multi-list\n"
+        "  support, encryption, priority starring (pinning), and smooth list transitions.\n"
+        "  It works seamlessly interactively (TUI) and scriptably (CLI commands).",
+        markup=False
+    )
     console.print()
     
     console.print(Text("Usage:", style="bold yellow"))
-    console.print("  td [command] [options]", markup=False)
+    console.print("  td [command] [options] [--list=<list_name>]", markup=False)
     console.print()
     
     console.print(Text("Commands:", style="bold yellow"))
@@ -46,25 +110,34 @@ def _run_help() -> None:
     commands_table.add_column(style="green")
     commands_table.add_column()
     
-    commands_table.add_row("  (default)", "Launch the interactive TUI todo app")
-    commands_table.add_row("  add <text>", "Add a new task")
-    commands_table.add_row("  list", "List all active tasks in the terminal")
-    commands_table.add_row("  archive", "Open the TUI directly in the archive view")
-    commands_table.add_row("  update", "Update td to the latest version from PyPI")
+    commands_table.add_row("  (default)", "Launch interactive TUI todo app (defaults to 'main' list)")
+    commands_table.add_row("  add <text>", "Add a new task to active or specified list")
+    commands_table.add_row("  list", "Print active tasks sequentially between dividers")
+    commands_table.add_row("  archive", "Open TUI directly in the completed archive screen")
+    commands_table.add_row("  export [file]", "Export database to JSON file or print to stdout")
+    commands_table.add_row("  import <file>", "Import and merge database records from a JSON file")
+    commands_table.add_row("  update", "Upgrade the `td` package to the latest version")
     
     console.print(commands_table)
     console.print()
     
-    console.print(Text("Options:", style="bold yellow"))
+    console.print(Text("Flags & Parameters:", style="bold yellow"))
     
     options_table = Table.grid(padding=(0, 2))
     options_table.add_column(style="green")
     options_table.add_column()
     
-    options_table.add_row("  --dev", "Watch source files and restart TUI automatically")
-    options_table.add_row("  -h, --help", "Show this help message and exit")
+    options_table.add_row("  -l, --list <name>", "Specify/create list context (TUI list-lock, CLI scope)")
+    options_table.add_row("  --dev", "Watch source code directory and restart interactive TUI on changes")
+    options_table.add_row("  -h, --help", "Print this detailed, LLM-friendly help menu and exit")
     
     console.print(options_table)
+    console.print()
+    
+    console.print(Text("List Operations & Keybindings:", style="bold yellow"))
+    console.print("  • Switch lists: Press Left / Right arrows inside normal TUI mode (unlocked).", markup=False)
+    console.print("  • Create lists: Press 'l' inside normal TUI mode, type list name and press Enter.", markup=False)
+    console.print("  • Star / Pin task: Highlight a task and press 's' to pin it to top (bold yellow).", markup=False)
     console.print()
 
 
@@ -87,75 +160,71 @@ def _cli_ensure_unlocked() -> None:
         sys.exit(1)
 
 
-def _run_add() -> None:
-    if len(sys.argv) < 3 or not sys.argv[2].strip():
-        print("Usage: td add <task_text>")
+def _run_add(list_name: str, args: list[str]) -> None:
+    if len(args) < 3 or not args[2].strip():
+        print("Usage: td add <task_text> [--list=<list_name>]")
         sys.exit(1)
     
-    task_text = sys.argv[2].strip()
+    task_text = args[2].strip()
     _cli_ensure_unlocked()
     
     from . import db
-    result = db.add_task(task_text)
+    result = db.add_task(task_text, list_name)
     if result is None:
         print("✗ Failed to add task (maximum active tasks reached).")
         sys.exit(1)
-    print(f"✓ Task added successfully (ID: {result['id']})")
+    print(f"✓ Task added successfully to list '{list_name}' (ID: {result['id']})")
 
 
-def _run_list() -> None:
+def _run_list(list_name: str) -> None:
     _cli_ensure_unlocked()
     from . import db
     from rich.console import Console
     from rich.text import Text
 
-    tasks = db.get_active_tasks()
+    tasks = db.get_active_tasks(list_name)
     console = Console()
     
-    open_count = sum(1 for t in tasks if t["status"] == "active")
-    completed_count = db.get_completed_count()
-    header = Text("td • ", style="bold")
-    header.append(Text(f"{open_count} open", style="dim"))
-    header.append(Text(" / ", style="dim"))
-    header.append(Text(f"{completed_count} completed", style="dim"))
-    console.print(header)
-    
-    console.print(Text("─" * 40, style="dim"))
+    # Top divider
+    width = min(40, console.width or 40)
+    console.print(Text("─" * width, style="dim"))
     
     if not tasks:
         console.print(Text("  No tasks found.", style="dim"))
-        return
-        
-    prev_starred = False
-    for i, task in enumerate(tasks, 1):
-        is_done = task["status"] == "done"
-        is_starred = task.get("starred", 0) == 1
-        
-        if i > 1 and prev_starred and not is_starred:
-            console.print()
+    else:
+        prev_starred = False
+        for i, task in enumerate(tasks, 1):
+            is_done = task["status"] == "done"
+            is_starred = task.get("starred", 0) == 1
             
-        if is_starred:
-            marker = "★"
-        else:
-            marker = "✓" if is_done else "○"
-        
-        text = task["text"]
-        if is_done:
-            line_text = Text(text, style="strike dim")
-            marker_text = Text(marker, style="green bold")
-        elif is_starred:
-            line_text = Text(text, style="bold yellow")
-            marker_text = Text(marker, style="bold yellow")
-        else:
-            line_text = Text(text)
-            marker_text = Text(marker, style="yellow")
+            if i > 1 and prev_starred and not is_starred:
+                console.print()
+                
+            if is_starred:
+                marker = "★"
+            else:
+                marker = "✓" if is_done else "○"
             
-        line = Text("  ")
-        line.append(marker_text)
-        line.append(" ")
-        line.append(line_text)
-        console.print(line)
-        prev_starred = is_starred
+            text = task["text"]
+            if is_done:
+                line_text = Text(text, style="strike dim")
+                marker_text = Text(marker, style="green bold")
+            elif is_starred:
+                line_text = Text(text, style="bold yellow")
+                marker_text = Text(marker, style="bold yellow")
+            else:
+                line_text = Text(text)
+                marker_text = Text(marker, style="yellow")
+                
+            line = Text("  ")
+            line.append(marker_text)
+            line.append(" ")
+            line.append(line_text)
+            console.print(line)
+            prev_starred = is_starred
+            
+    # Bottom divider
+    console.print(Text("─" * width, style="dim"))
 
 
 def _run_update() -> None:
@@ -236,6 +305,45 @@ def _run_dev() -> None:
     finally:
         observer.stop()
         observer.join()
+
+
+def _run_export(args: list[str]) -> None:
+    _cli_ensure_unlocked()
+    from . import db
+    try:
+        json_data = db.export_to_json()
+        if len(args) > 2:
+            filepath = args[2].strip()
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(json_data)
+            print(f"✓ Database successfully exported to {filepath}")
+        else:
+            print(json_data)
+    except Exception as e:
+        print(f"✗ Export failed: {e}")
+        sys.exit(1)
+
+
+def _run_import(args: list[str]) -> None:
+    if len(args) < 3:
+        print("Usage: td import <filename>")
+        sys.exit(1)
+    
+    filepath = args[2].strip()
+    if not os.path.exists(filepath):
+        print(f"✗ File not found: {filepath}")
+        sys.exit(1)
+        
+    _cli_ensure_unlocked()
+    from . import db
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            json_str = f.read()
+        db.import_from_json(json_str)
+        print(f"✓ Database successfully imported and merged from {filepath}")
+    except Exception as e:
+        print(f"✗ Import failed: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

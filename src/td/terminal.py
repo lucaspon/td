@@ -119,6 +119,11 @@ def clear_screen() -> None:
     sys.stdout.flush()
 
 
+def reset_cursor() -> None:
+    sys.stdout.write("\033[H")
+    sys.stdout.flush()
+
+
 def hide_cursor() -> None:
     sys.stdout.write("\033[?25l")
     sys.stdout.flush()
@@ -146,3 +151,4 @@ KEY_ALT_ARROW_UP = "\x1b[1;3A"
 KEY_ALT_ARROW_DOWN = "\x1b[1;3B"
 KEY_CTRL_ARROW_UP = "\x1b[1;5A"
 KEY_CTRL_ARROW_DOWN = "\x1b[1;5B"
+KEY_CTRL_P = "\x10"
