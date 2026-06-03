@@ -690,12 +690,12 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         db.move_task(tasks[hover]["id"], 1)
                         hover += 1
                 elif key == term.KEY_ALT_ARROW_UP:
-                    if tasks and hover > 0:
+                    if tasks and hover > 0 and len(tasks) < db.get_max_tasks(current_list):
                         db.duplicate_task(tasks[hover]["id"], -1)
                         tasks = db.get_active_tasks(current_list)
                         hover -= 1
                 elif key == term.KEY_ALT_ARROW_DOWN:
-                    if tasks and len(tasks) < db.get_max_tasks():
+                    if tasks and len(tasks) < db.get_max_tasks(current_list):
                         db.duplicate_task(tasks[hover]["id"], 1)
                         tasks = db.get_active_tasks(current_list)
                         hover += 1
@@ -706,7 +706,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         edit_text = tasks[hover]["text"]
                         edit_cursor = len(edit_text)
                 elif key == "a":
-                    if len(tasks) < db.get_max_tasks():
+                    if len(tasks) < db.get_max_tasks(current_list):
                         new_task = db.add_task("", current_list)
                         if new_task:
                             tasks = db.get_active_tasks(current_list)

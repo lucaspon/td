@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.4]
+- Fix list-scoped max tasks limit not being respected when adding or duplicating tasks in the TUI.
+
+
 ## [0.1.3]
 - Add vertical Lists Menu screen to view and manage lists vertically with smooth screen transitions.
 - Support inline list creation, list renaming, deletion, and position reordering in the Lists Menu view.
