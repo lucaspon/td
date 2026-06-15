@@ -14,12 +14,27 @@ console = Console()
 
 def _copy_to_clipboard(text: str) -> bool:
     import subprocess
-    try:
-        p = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
-        p.communicate(input=text.encode("utf-8"))
-        return p.returncode == 0
-    except Exception:
-        return False
+    import sys as _sys
+    encoded = text.encode("utf-8")
+    if _sys.platform == "darwin":
+        candidates = [["pbcopy"]]
+    else:
+        candidates = [
+            ["wl-copy"],
+            ["xclip", "-selection", "clipboard"],
+            ["xsel", "--clipboard", "--input"],
+        ]
+    for cmd in candidates:
+        try:
+            p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+            p.communicate(input=encoded)
+            if p.returncode == 0:
+                return True
+        except FileNotFoundError:
+            continue
+        except Exception:
+            break
+    return False
 
 
 def prompt_password(prompt_text: str = "Enter password: ") -> str:
@@ -149,6 +164,8 @@ def _render_main(
     list_name: str = "main",
     lock_list: bool = False,
     view: str = "tasks",
+    status_msg: str = "",
+    lists_scroll: int = 0,
 ) -> None:
     term.reset_cursor()
 
@@ -244,13 +261,18 @@ def _render_main(
                     console.print(Text(f"{prefix}{match_item}", style="dim"), end="\033[K\n")
     elif view == "lists_menu":
         lists = db.get_all_lists()
+        term_height = console.height or 24
+        max_visible = max(3, term_height - 6)
+        start = lists_scroll
+        end = min(start + max_visible, len(lists))
+
         lines = []
-        for i, lst in enumerate(lists):
+        for i in range(start, end):
+            lst = lists[i]
             is_hovered = i == hover
             prefix = "▸ " if is_hovered else "  "
-            
+
             if mode == "edit" and is_hovered:
-                # inline list editing
                 edit_style = "bold cyan"
                 cursor_style = "reverse bold cyan"
                 edit_line = Text()
@@ -259,7 +281,7 @@ def _render_main(
                 edit_line.append(Text(char_under, style=cursor_style))
                 if edit_cursor < len(edit_text):
                     edit_line.append(Text(edit_text[edit_cursor + 1:], style=edit_style))
-                
+
                 line = Text(prefix)
                 line.append(edit_line)
                 lines.append(line)
@@ -268,7 +290,7 @@ def _render_main(
                     lines.append(Text(f"▸ {lst}", style="bold cyan"))
                 else:
                     lines.append(Text(f"  {lst}"))
-                    
+
         if mode == "new_list":
             prefix = "▸ "
             edit_style = "bold cyan"
@@ -279,14 +301,14 @@ def _render_main(
             edit_line.append(Text(char_under, style=cursor_style))
             if edit_cursor < len(edit_text):
                 edit_line.append(Text(edit_text[edit_cursor + 1:], style=edit_style))
-            
+
             line = Text(prefix)
             line.append(edit_line)
             lines.append(line)
-            
+
         if not lists and mode != "new_list":
             lines.append(Text("  No lists. Press a to add one.", style="dim"))
-            
+
         for line in lines:
             console.print(line, end="\033[K\n")
     else:
@@ -387,6 +409,9 @@ def _render_main(
     if mode == "confirm":
         console.print(end="\033[K\n")
         console.print(Text(f"  {confirm_msg}", style="yellow bold"), end="\033[K\n")
+    elif status_msg:
+        console.print(end="\033[K\n")
+        console.print(Text(f"  {status_msg}", style="dim"), end="\033[K\n")
 
     console.print(end="\033[K\n")
     console.print(Text("─" * divider_width, style="dim"), end="\033[K\n")
@@ -479,6 +504,8 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
     confirm_action: str = ""  # "delete", "archive", "delete_list"
     confirm_task_id: int | None = None
     confirm_list_name = ""
+    status_msg = ""
+    lists_scroll = 0
 
     current_list = list_name
 
@@ -523,6 +550,11 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                 hover = len(lists) - 1
             if not lists:
                 hover = 0
+            max_vis = max(3, (console.height or 24) - 6)
+            if hover < lists_scroll:
+                lists_scroll = hover
+            elif hover >= lists_scroll + max_vis:
+                lists_scroll = hover - max_vis + 1
         else:
             if tasks and hover >= len(tasks):
                 hover = len(tasks) - 1
@@ -540,7 +572,8 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
         else:
             confirm_msg = ""
 
-        _render_main(tasks, hover, mode, edit_text, edit_cursor, confirm_msg, current_list, lock_list, view)
+        _render_main(tasks, hover, mode, edit_text, edit_cursor, confirm_msg, current_list, lock_list, view, status_msg, lists_scroll)
+        status_msg = ""
 
         key = term.read_key()
 
@@ -690,15 +723,21 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         db.move_task(tasks[hover]["id"], 1)
                         hover += 1
                 elif key == term.KEY_ALT_ARROW_UP:
-                    if tasks and hover > 0 and len(tasks) < db.get_max_tasks(current_list):
+                    limit = db.get_max_tasks(current_list)
+                    if tasks and hover > 0 and len(tasks) < limit:
                         db.duplicate_task(tasks[hover]["id"], -1)
                         tasks = db.get_active_tasks(current_list)
                         hover -= 1
+                    elif tasks and len(tasks) >= limit:
+                        status_msg = f"max tasks reached ({limit})"
                 elif key == term.KEY_ALT_ARROW_DOWN:
-                    if tasks and len(tasks) < db.get_max_tasks(current_list):
+                    limit = db.get_max_tasks(current_list)
+                    if tasks and len(tasks) < limit:
                         db.duplicate_task(tasks[hover]["id"], 1)
                         tasks = db.get_active_tasks(current_list)
                         hover += 1
+                    elif tasks:
+                        status_msg = f"max tasks reached ({limit})"
                 elif key in (term.KEY_ENTER, "e"):
                     if tasks:
                         mode = "edit"
@@ -706,7 +745,8 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         edit_text = tasks[hover]["text"]
                         edit_cursor = len(edit_text)
                 elif key == "a":
-                    if len(tasks) < db.get_max_tasks(current_list):
+                    limit = db.get_max_tasks(current_list)
+                    if len(tasks) < limit:
                         new_task = db.add_task("", current_list)
                         if new_task:
                             tasks = db.get_active_tasks(current_list)
@@ -715,6 +755,8 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                             edit_text = ""
                             edit_cursor = 0
                             mode = "edit"
+                    else:
+                        status_msg = f"max tasks reached ({limit})"
                 elif key == "d":
                     if tasks:
                         confirm_action = "delete"

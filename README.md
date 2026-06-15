@@ -30,6 +30,12 @@ Run directly without installing:
 uvx td-task
 ```
 
+For the `--dev` file watcher, install the optional extra:
+
+```bash
+uv tool install 'td-task[dev-mode]'
+```
+
 ## Usage
 
 ```
@@ -45,6 +51,7 @@ td [command] [--list <name>]
 | `td export [file]` | Export database to JSON (stdout if no file) |
 | `td import <file>` | Merge a JSON backup into the database |
 | `td update` | Upgrade to the latest version |
+| `td --version` | Print the installed version |
 | `td --help` | Print the help menu |
 
 The `-l` / `--list` flag scopes a command to a specific list. It is required for `add`, `list`, and `archive`.

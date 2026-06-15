@@ -147,6 +147,10 @@ source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
     { name = "rich" },
+]
+
+[package.optional-dependencies]
+dev-mode = [
     { name = "watchdog" },
 ]
 
@@ -154,8 +158,9 @@ dependencies = [
 requires-dist = [
     { name = "cryptography", specifier = ">=42.0.0" },
     { name = "rich", specifier = ">=15.0.0" },
-    { name = "watchdog", specifier = ">=6.0.0" },
+    { name = "watchdog", marker = "extra == 'dev-mode'", specifier = ">=6.0.0" },
 ]
+provides-extras = ["dev-mode"]
 
 [package.metadata.requires-dev]
 dev = []

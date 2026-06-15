@@ -6,9 +6,11 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "rich>=15.0.0",
-    "watchdog>=6.0.0",
     "cryptography>=42.0.0",
 ]
+
+[project.optional-dependencies]
+dev-mode = ["watchdog>=6.0.0"]
 
 [project.scripts]
 td = "td.__main__:main"

@@ -41,7 +41,11 @@ def main() -> None:
     try:
         list_name, has_list, args = _parse_list_arg()
 
-        if "-h" in args or "--help" in args or (len(args) > 1 and args[1] in ("help", "-help", "--help")):
+        if "-V" in args or "--version" in args:
+            from importlib.metadata import version as _pkg_version
+            print(f"td {_pkg_version('td-task')}")
+            return
+        elif "-h" in args or "--help" in args or (len(args) > 1 and args[1] in ("help", "-help", "--help")):
             _run_help()
         elif "--dev" in args:
             _run_dev()
@@ -266,8 +270,13 @@ def _print_changelog() -> None:
 
 def _run_dev() -> None:
     """Watch src/td/ for changes and restart the TUI automatically."""
-    from watchdog.observers import Observer
-    from watchdog.events import FileSystemEventHandler
+    try:
+        from watchdog.observers import Observer
+        from watchdog.events import FileSystemEventHandler
+    except ImportError:
+        print("✗ watchdog is required for --dev mode.")
+        print("  Install it with: pip install 'td-task[dev-mode]'")
+        sys.exit(1)
 
     import subprocess
     import time
