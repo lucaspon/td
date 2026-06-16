@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.5]
+- Fix Windows keyboard input: arrow keys, Home/End, Delete, and Ctrl/Alt+arrow now work by decoding the native Windows scancode protocol instead of assuming ANSI escape sequences.
+- Fix clipboard copy (`y`) on Windows by using the `clip` command.
+- Gracefully degrade if a console cannot enable virtual terminal mode, instead of crashing on startup.
+
 ## [0.1.4]
 - Fix list-scoped max tasks limit not being respected when adding or duplicating tasks in the TUI.
 

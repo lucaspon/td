@@ -18,6 +18,8 @@ def _copy_to_clipboard(text: str) -> bool:
     encoded = text.encode("utf-8")
     if _sys.platform == "darwin":
         candidates = [["pbcopy"]]
+    elif _sys.platform == "win32":
+        candidates = [["clip"]]
     else:
         candidates = [
             ["wl-copy"],

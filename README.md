@@ -148,6 +148,8 @@ The TUI uses raw ANSI escape sequences directly rather than Curses or Textual. T
 
 Runtime dependencies: `rich` (terminal rendering), `cryptography` (AES encryption). `watchdog` is optional (`[dev-mode]` extra).
 
+Works on macOS, Linux, and Windows. On Windows, use a terminal with ANSI support such as Windows Terminal for the best experience.
+
 ## Data model
 
 Two tables in a SQLite file:
