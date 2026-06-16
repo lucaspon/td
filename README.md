@@ -112,9 +112,66 @@ td export backup.json
 
 Settings you can change: max tasks per list (3–50), max starred tasks, database encryption (AES), and backup export / import.
 
-## Storage
+## Agent-friendly
 
-Tasks live in `~/.td.db` — a single portable SQLite file. Delete it to start fresh.
+`td` works well as a task layer for AI agents and shell scripts. The CLI commands are designed for scripting:
+
+```bash
+# add tasks from a script or agent
+td add "review PR #42" -l work
+td add "update dependencies" -l work
+
+# read tasks as plain text
+td list -l work
+
+# dump the full database as JSON
+td export | jq '.tasks[] | select(.status == "active")'
+
+# point at a separate database — useful for testing or sandboxing
+TD_DB_PATH=/tmp/agent.db td add "isolated task" -l inbox
+```
+
+The `--help` output is written to be LLM-readable, so agents can self-orient by running `td --help`.
+
+## Architecture
+
+`td` is a single Python package with no framework dependencies:
+
+| File | Role |
+|------|------|
+| `__main__.py` | CLI entry point, argument parsing, non-TUI commands |
+| `tui.py` | Raw terminal render loop, all keybinding logic |
+| `db.py` | SQLite layer — all reads and writes go through here |
+| `terminal.py` | Low-level raw mode I/O and key decoding |
+
+The TUI uses raw ANSI escape sequences directly rather than Curses or Textual. This keeps startup instant and the binary small.
+
+Runtime dependencies: `rich` (terminal rendering), `cryptography` (AES encryption). `watchdog` is optional (`[dev-mode]` extra).
+
+## Data model
+
+Two tables in a SQLite file:
+
+**`lists`** — `name` (PK), `position`, `max_tasks`
+
+**`tasks`** — `id`, `text`, `status` (`active` / `done` / `archived`), `position`, `created_at`, `done_at`, `archived_at`, `starred`, `list_name` (FK → lists, CASCADE DELETE)
+
+Tasks keep their timestamps through the full lifecycle: created → done → archived. Deleting a list permanently removes all its tasks via the cascade.
+
+## Portability
+
+Everything lives in `~/.td.db` — a single SQLite file you can copy, back up, or move between machines.
+
+```bash
+# override the database path
+export TD_DB_PATH=~/Dropbox/td.db
+
+# back up
+td export > backup.json
+
+# restore on another machine
+td import backup.json
+```
 
 You can encrypt the database with a password from the settings screen (`/`). If you forget the password, there is no recovery — your tasks are gone.
 
