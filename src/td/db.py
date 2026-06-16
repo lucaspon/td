@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-DB_PATH = Path.home() / ".td.db"
+DB_PATH = Path(os.environ.get("TD_DB_PATH", Path.home() / ".td.db"))
 
 DEFAULT_MAX_TASKS = 15
 DEFAULT_MAX_STARRED_TASKS = 3

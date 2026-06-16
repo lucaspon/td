@@ -2,15 +2,7 @@
 
 A fast, keyboard-driven TUI todo manager for the terminal. Multi-list, encrypted, scriptable.
 
-```
-td • work  • 3 open / 5 completed
-────────────────────────────────
-★ finish the README
-▸ ○ write tests
-  ○ push to prod
-────────────────────────────────
-  a:add │ e:edit │ d:delete │ Space:done │ s:star │ c:clear │ l:view lists │ q:quit │ ?:help
-```
+![td demo](assets/demo.gif)
 
 ## Install
 
