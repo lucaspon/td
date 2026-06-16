@@ -11,6 +11,34 @@ from . import terminal as term
 
 console = Console()
 
+_VERSION: str | None = None
+
+
+def _app_version() -> str:
+    """Return the installed package version, cached. Falls back to '?'."""
+    global _VERSION
+    if _VERSION is None:
+        try:
+            from importlib.metadata import version as _pkg_version
+            _VERSION = _pkg_version("td-task")
+        except Exception:
+            _VERSION = "?"
+    return _VERSION
+
+
+def _footer_with_version(hint: str, width: int) -> Text:
+    """Build a dim footer line with the app version right-aligned to width.
+
+    Drops the version if the terminal is too narrow to fit it cleanly.
+    """
+    line = Text(hint, style="dim")
+    ver = f"td v{_app_version()}"
+    pad = width - len(hint) - len(ver)
+    if pad >= 1:
+        line.append(" " * pad)
+        line.append(Text(ver, style="dim"))
+    return line
+
 
 def _copy_to_clipboard(text: str) -> bool:
     import subprocess
@@ -151,7 +179,7 @@ def _render_help_screen(lock_list: bool = False) -> None:
     console.print()
 
     console.print(Text("─" * divider_width, style="dim"))
-    console.print(Text("  Press any key to return...", style="dim"))
+    console.print(_footer_with_version("  Press any key to return...", divider_width))
     sys.stdout.write("\033[J")
     sys.stdout.flush()
 
@@ -1119,9 +1147,8 @@ def _render_settings(
 
     console.print(end="\033[K\n")
     console.print(Text("─" * divider_width, style="dim"), end="\033[K\n")
-    console.print(Text(hint_text, style="dim"), end="\033[K\n")
+    console.print(_footer_with_version(hint_text, divider_width), end="\033[K\n")
     sys.stdout.write("\033[J")
-    sys.stdout.flush()
     sys.stdout.flush()
 
 
