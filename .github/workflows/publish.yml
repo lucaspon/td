@@ -1,6 +1,7 @@
 name: Publish to PyPI
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - 'v*'
@@ -18,7 +19,7 @@ jobs:
           enable-cache: true
 
       - name: Install Doppler CLI
-        run: curl -Ls https://doppler.com/install.sh | sh
+        run: curl -Ls https://doppler.com/install.sh | bash
 
       - name: Set up Python
         uses: actions/setup-python@v5
