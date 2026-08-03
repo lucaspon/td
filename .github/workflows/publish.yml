@@ -8,16 +8,19 @@ on:
 
 jobs:
   deploy:
+    name: Publish distribution to PyPI
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/td-task/
+    permissions:
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-
-      - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v3
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -28,6 +31,6 @@ jobs:
         run: uv build
 
       - name: Publish to PyPI
-        run: doppler run -- sh -c 'UV_PUBLISH_TOKEN="$PYPI_API" uv publish'
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          skip-existing: true
