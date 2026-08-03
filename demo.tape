@@ -11,13 +11,13 @@ Set PlaybackSpeed 0.85
 
 # Warm up, set env, clear before Show
 Hide
-Type "cd /Users/lucaspon/repos/td-tasks && export TD_DB_PATH=/tmp/td_demo.db && rm -f $TD_DB_PATH && uv -q run td --version > /dev/null 2>&1 && clear"
+Type "export TD_DB_PATH=/tmp/td_demo.db && rm -f $TD_DB_PATH && td --version > /dev/null 2>&1 && clear"
 Enter
 Sleep 3s
 Show
 
 # Launch the TUI — env var already set in Hide
-Type "uv -q run td -l work"
+Type "td -l work"
 Enter
 Sleep 1400ms
 

@@ -118,8 +118,26 @@ def _ensure_unlocked() -> bool:
     sys.exit(1)
 
 
+def _ensure_list_unlocked(list_name: str) -> bool:
+    if not db.is_list_encryption_enabled(list_name) or db.is_list_unlocked(list_name):
+        return True
+
+    for attempt in range(3):
+        if attempt == 0:
+            prompt_text = f'List "{list_name}" is encrypted. Enter password: '
+        else:
+            prompt_text = f"Incorrect password (attempt {attempt}/3). Try again: "
+        password = prompt_password(prompt_text)
+        if db.set_list_encryption_key_from_password(list_name, password):
+            return True
+
+    term.clear_screen()
+    console.print(Text(f'  Could not unlock list "{list_name}".', style="red bold"))
+    return False
+
+
 def _normal_hint_text(lock_list: bool = False) -> str:
-    parts = ["a:add", "e:edit", "d:delete", "Space:done", "s:star", "c:clear"]
+    parts = ["a:task", "A:note", "e/Enter:edit", "E:rename note", "d:delete", "Space:done", "s:star", "c:clear"]
     if not lock_list:
         parts.append("l:view lists")
     parts.append("q:quit")
@@ -140,14 +158,28 @@ def _render_help_screen(lock_list: bool = False) -> None:
     console.print()
 
     # Group 1: Task Actions
-    console.print(Text("Task Actions:", style="bold yellow"))
+    console.print(Text("Task & Note Actions:", style="bold yellow"))
     console.print("  a           Add a new task")
-    console.print("  e / Enter   Edit selected task")
+    console.print("  A           Add a Markdown note")
+    console.print("  e / Enter   Edit selected task or note body")
+    console.print("  E           Rename selected note")
     console.print("  d           Delete selected task")
     console.print("  Space       Toggle task done/active")
     console.print("  s           Toggle star/priority (pin to top)")
     console.print("  c           Archive all completed tasks")
     console.print("  y           Copy active tasks in list to clipboard")
+    console.print()
+
+    console.print(Text("Note Editor:", style="bold yellow"))
+    console.print("  Esc         Save and close")
+    console.print("  Ctrl+S      Save without closing")
+    console.print("  Enter       Insert a new line")
+    console.print("              Continue and indent Markdown bullets automatically")
+    console.print("  Alt+↑/↓     Move current line")
+    clear_line_key = "Cmd+Backspace" if sys.platform == "darwin" else "Ctrl+Backspace"
+    console.print(f"  {clear_line_key:<18}Clear current line")
+    console.print("  Tab/Shift+Tab  Indent or outdent current line")
+    console.print("  # / * / _   Headings, bullets, bold, and italic Markdown")
     console.print()
 
     # Group 2: Lists & Navigation
@@ -167,6 +199,8 @@ def _render_help_screen(lock_list: bool = False) -> None:
         console.print("  Esc / q     Quit application")
         console.print("  a           Add a new list inline")
         console.print("  e           Rename highlighted list inline")
+        console.print("  A           Archive highlighted list")
+        console.print("  ,           View and restore archived lists")
         console.print("  d           Delete highlighted list with all tasks inside")
         console.print("  Shift+↑/↓   Reorder highlighted list position")
         console.print()
@@ -226,6 +260,8 @@ def _render_main(
             hint_parts = ["Esc:cancel", "Enter:confirm edit"]
     elif mode == "new_list":
         hint_parts = ["Esc:cancel", "Enter:create list"]
+    elif mode == "new_note":
+        hint_parts = ["Esc:cancel", "Enter:create note"]
     elif mode == "confirm":
         hint_parts = ["Enter:confirm", "Esc:cancel"]
     elif mode == "fuzzy_list":
@@ -233,9 +269,12 @@ def _render_main(
     else:
         # mode == "normal"
         if view == "lists_menu":
-            hint_parts = ["a:add", "e:edit", "d:delete", "Enter:open", "q:quit"]
+            hint_parts = [
+                "a:add", "e:edit", "A:archive", ",:archived", "d:delete",
+                "Enter:open", "q:quit",
+            ]
         else:
-            hint_parts = ["a:add", "e:edit", "d:delete", "Space:done", "s:star", "c:clear"]
+            hint_parts = ["a:task", "A:note", "e/Enter:edit", "E:rename note", "d:delete", "Space:done", "s:star", "c:clear"]
             if not lock_list:
                 hint_parts.append("l:view lists")
             hint_parts.append("q:quit")
@@ -316,10 +355,11 @@ def _render_main(
                 line.append(edit_line)
                 lines.append(line)
             else:
+                lock_suffix = " 🔒" if db.is_list_encryption_enabled(lst) else ""
                 if is_hovered:
-                    lines.append(Text(f"▸ {lst}", style="bold cyan"))
+                    lines.append(Text(f"▸ {lst}{lock_suffix}", style="bold cyan"))
                 else:
-                    lines.append(Text(f"  {lst}"))
+                    lines.append(Text(f"  {lst}{lock_suffix}"))
 
         if mode == "new_list":
             prefix = "▸ "
@@ -348,6 +388,7 @@ def _render_main(
             is_hovered = i == hover
             is_done = task["status"] == "done"
             is_starred = task.get("starred", 0) == 1
+            is_note = task.get("is_note", False)
 
             if i > 0 and prev_starred and not is_starred:
                 lines.append(Text(""))
@@ -358,6 +399,9 @@ def _render_main(
             if mode == "edit" and i == hover:
                 edit_style = "bold yellow" if is_starred else "cyan bold"
                 cursor_style = "reverse bold yellow" if is_starred else "reverse cyan bold"
+                if is_note:
+                    edit_style += " underline"
+                    cursor_style += " underline"
                 
                 edit_line = Text()
                 edit_line.append(Text(edit_text[:edit_cursor], style=edit_style))
@@ -379,17 +423,17 @@ def _render_main(
                 if not text:
                     line_text = Text(" ", style="underline dim")
                 elif is_done:
-                    line_text = Text(text, style="strike dim")
+                    line_text = Text(text, style="strike dim underline" if is_note else "strike dim")
                 elif is_hovered:
                     if is_starred:
-                        line_text = Text(text, style="bold yellow")
+                        line_text = Text(text, style="bold yellow underline" if is_note else "bold yellow")
                     else:
-                        line_text = Text(text, style="cyan bold")
+                        line_text = Text(text, style="cyan bold underline" if is_note else "cyan bold")
                 else:
                     if is_starred:
-                        line_text = Text(text, style="bold yellow")
+                        line_text = Text(text, style="bold yellow underline" if is_note else "bold yellow")
                     else:
-                        line_text = Text(text)
+                        line_text = Text(text, style="underline" if is_note else None)
 
                 # Word wrapping aligned with marker width (4 chars)
                 wrap_w = max(20, divider_width - 4)
@@ -409,11 +453,16 @@ def _render_main(
                     for line_idx, w_line in enumerate(wrapped_text_lines):
                         w_text_obj = Text(w_line)
                         if is_done:
-                            w_text_obj.style = "strike dim"
+                            w_text_obj.style = "strike dim underline" if is_note else "strike dim"
                         elif is_hovered:
-                            w_text_obj.style = "bold yellow" if is_starred else "cyan bold"
+                            if is_starred:
+                                w_text_obj.style = "bold yellow underline" if is_note else "bold yellow"
+                            else:
+                                w_text_obj.style = "cyan bold underline" if is_note else "cyan bold"
                         elif is_starred:
-                            w_text_obj.style = "bold yellow"
+                            w_text_obj.style = "bold yellow underline" if is_note else "bold yellow"
+                        elif is_note:
+                            w_text_obj.style = "underline"
                         
                         if line_idx == 0:
                             line = Text(prefix)
@@ -431,12 +480,22 @@ def _render_main(
             prev_starred = is_starred
 
         if not tasks:
-            lines.append(Text("  No tasks. Press a to add one.", style="dim"))
+            lines.append(Text("  No items. Press a for a task or A for a note.", style="dim"))
 
         for line in lines:
             console.print(line, end="\033[K\n")
 
-    if mode == "confirm":
+    if mode == "new_note":
+        console.print(end="\033[K\n")
+        console.print(Text("  Note name", style="bold yellow"), end="\033[K\n")
+        input_line = Text("  > ", style="yellow bold")
+        input_line.append(Text(edit_text[:edit_cursor], style="yellow bold"))
+        char_under = edit_text[edit_cursor] if edit_cursor < len(edit_text) else " "
+        input_line.append(Text(char_under, style="reverse yellow bold"))
+        if edit_cursor < len(edit_text):
+            input_line.append(Text(edit_text[edit_cursor + 1:], style="yellow bold"))
+        console.print(input_line, end="\033[K\n")
+    elif mode == "confirm":
         console.print(end="\033[K\n")
         console.print(Text(f"  {confirm_msg}", style="yellow bold"), end="\033[K\n")
     elif status_msg:
@@ -460,6 +519,250 @@ def _fmt_timestamp(iso: str | None) -> str:
     return local.strftime("%Y-%m-%d %H:%M")
 
 
+def _default_note_title() -> str:
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def _markdown_preview_line(source: str) -> Text:
+    """Render supported inline Markdown for a non-active editor line."""
+    import re
+
+    heading = re.match(r"^\s*#{1,6}\s+(.*)$", source)
+    if heading:
+        source = heading.group(1)
+        base_style = "bold"
+        prefix = ""
+    else:
+        base_style = ""
+        bullet = re.match(r"^(\s*)[*+-]\s+(.*)$", source)
+        if bullet:
+            prefix = f"{bullet.group(1)}• "
+            source = bullet.group(2)
+        else:
+            prefix = ""
+
+    rendered = Text(prefix, style=base_style)
+    token = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*|_[^_]+_)")
+    cursor = 0
+    for match in token.finditer(source):
+        rendered.append(source[cursor:match.start()], style=base_style)
+        value = match.group(0)
+        if value.startswith("_"):
+            style = "italic"
+            inner = value[1:-1]
+        elif value.startswith("**"):
+            style = "bold"
+            inner = value[2:-2]
+        else:
+            style = "bold"
+            inner = value[1:-1]
+        if base_style and base_style not in style:
+            style = f"{base_style} {style}"
+        rendered.append(inner, style=style)
+        cursor = match.end()
+    rendered.append(source[cursor:], style=base_style)
+    return rendered
+
+
+def _bullet_line_parts(source: str) -> tuple[str, str, str] | None:
+    import re
+
+    match = re.match(r"^(\s*)([*+-])\s(.*)$", source)
+    if match is None:
+        return None
+    return match.group(1), match.group(2), match.group(3)
+
+
+def _render_note_editor(
+    title: str,
+    lines: list[str],
+    row: int,
+    column: int,
+    scroll: int,
+    status_msg: str = "",
+) -> None:
+    term.reset_cursor()
+    width = max(30, console.width or 80)
+    height = max(10, console.height or 24)
+
+    header = Text("note • ", style="bold")
+    header.append(Text(title, style="bold cyan underline"))
+    header.append(Text(f" • line {row + 1}/{len(lines)}", style="dim"))
+    console.print(header, end="\033[K\n", overflow="crop", no_wrap=True)
+    console.print(Text("─" * width, style="dim"), end="\033[K\n")
+
+    visible_rows = max(3, height - 6)
+    end = min(len(lines), scroll + visible_rows)
+    number_width = max(2, len(str(len(lines))))
+    content_width = max(10, width - number_width - 5)
+
+    for line_index in range(scroll, end):
+        prefix = f"{'▸' if line_index == row else ' '} {line_index + 1:>{number_width}} │ "
+        line = lines[line_index]
+        output = Text(prefix, style="cyan bold" if line_index == row else "dim")
+        if line_index == row:
+            offset = max(0, column - content_width + 1)
+            visible = line[offset:offset + content_width]
+            visible_column = column - offset
+            output.append(visible[:visible_column], style="cyan bold")
+            char_under = visible[visible_column] if visible_column < len(visible) else " "
+            output.append(char_under, style="reverse cyan bold")
+            if visible_column < len(visible):
+                output.append(visible[visible_column + 1:], style="cyan bold")
+        else:
+            output.append(_markdown_preview_line(line))
+        console.print(output, end="\033[K\n", overflow="crop", no_wrap=True)
+
+    for _ in range(visible_rows - (end - scroll)):
+        console.print(end="\033[K\n")
+
+    footer = "  Esc:save & close │ Ctrl+S:save │ Enter:new line │ arrows:move"
+    if status_msg:
+        footer = f"  {status_msg} │ " + footer.strip()
+    clear_line_key = "Cmd+⌫" if sys.platform == "darwin" else "Ctrl+⌫"
+    editor_hint = (
+        f"  Alt+↑/↓:move line │ {clear_line_key}:clear line │ "
+        "Tab/Shift+Tab:indent/outdent"
+    )
+    console.print(Text("─" * width, style="dim"), end="\033[K\n")
+    console.print(Text(footer, style="dim"), end="\033[K\n", overflow="crop", no_wrap=True)
+    console.print(Text(editor_hint, style="dim"), end="\033[K\n", overflow="crop", no_wrap=True)
+    sys.stdout.write("\033[J")
+    sys.stdout.flush()
+
+
+def _run_note_editor(note_id: int) -> None:
+    note = db.get_note(note_id)
+    if note is None:
+        return
+    lines = note["content"].split("\n") or [""]
+    row = 0
+    column = 0
+    scroll = 0
+    status_msg = ""
+
+    while True:
+        visible_rows = max(3, (console.height or 24) - 6)
+        if row < scroll:
+            scroll = row
+        elif row >= scroll + visible_rows:
+            scroll = row - visible_rows + 1
+        _render_note_editor(note["title"], lines, row, column, scroll, status_msg)
+        status_msg = ""
+        key = term.read_key()
+
+        if key == term.KEY_ESC:
+            db.update_note_content(note_id, "\n".join(lines))
+            term.clear_screen()
+            return
+        if key == term.KEY_CTRL_S:
+            db.update_note_content(note_id, "\n".join(lines))
+            status_msg = "saved"
+        elif key == term.KEY_ALT_ARROW_UP:
+            if row > 0:
+                lines[row - 1], lines[row] = lines[row], lines[row - 1]
+                row -= 1
+        elif key == term.KEY_ALT_ARROW_DOWN:
+            if row < len(lines) - 1:
+                lines[row], lines[row + 1] = lines[row + 1], lines[row]
+                row += 1
+        elif key in (term.KEY_ALT_ARROW_LEFT, term.KEY_ALT_WORD_LEFT):
+            while column > 0 and lines[row][column - 1].isspace():
+                column -= 1
+            while column > 0 and not lines[row][column - 1].isspace():
+                column -= 1
+        elif key in (term.KEY_ALT_ARROW_RIGHT, term.KEY_ALT_WORD_RIGHT):
+            line_length = len(lines[row])
+            while column < line_length and not lines[row][column].isspace():
+                column += 1
+            while column < line_length and lines[row][column].isspace():
+                column += 1
+        elif key in (term.KEY_ALT_BACKSPACE, term.KEY_ALT_BACKSPACE_BS):
+            word_start = column
+            while word_start > 0 and lines[row][word_start - 1].isspace():
+                word_start -= 1
+            while word_start > 0 and not lines[row][word_start - 1].isspace():
+                word_start -= 1
+            lines[row] = lines[row][:word_start] + lines[row][column:]
+            column = word_start
+        elif key in (term.KEY_CMD_BACKSPACE, term.KEY_CTRL_BACKSPACE):
+            lines[row] = ""
+            column = 0
+        elif key == term.KEY_ARROW_UP:
+            if row > 0:
+                row -= 1
+                column = min(column, len(lines[row]))
+        elif key == term.KEY_ARROW_DOWN:
+            if row < len(lines) - 1:
+                row += 1
+                column = min(column, len(lines[row]))
+        elif key == term.KEY_ARROW_LEFT:
+            if column > 0:
+                column -= 1
+            elif row > 0:
+                row -= 1
+                column = len(lines[row])
+        elif key == term.KEY_ARROW_RIGHT:
+            if column < len(lines[row]):
+                column += 1
+            elif row < len(lines) - 1:
+                row += 1
+                column = 0
+        elif key == term.KEY_HOME:
+            column = 0
+        elif key == term.KEY_END:
+            column = len(lines[row])
+        elif key == term.KEY_ENTER:
+            bullet = _bullet_line_parts(lines[row])
+            if bullet and not bullet[2].strip():
+                lines[row] = ""
+                column = 0
+            else:
+                remainder = lines[row][column:]
+                lines[row] = lines[row][:column]
+                if bullet:
+                    indent, marker, _ = bullet
+                    continuation_indent = indent if indent else "  "
+                    prefix = f"{continuation_indent}{marker} "
+                    remainder = prefix + remainder
+                    column = len(prefix)
+                else:
+                    column = 0
+                lines.insert(row + 1, remainder)
+                row += 1
+        elif key == term.KEY_BACKSPACE:
+            bullet = _bullet_line_parts(lines[row])
+            if bullet and not bullet[2].strip():
+                lines[row] = ""
+                column = 0
+            elif column > 0:
+                lines[row] = lines[row][:column - 1] + lines[row][column:]
+                column -= 1
+            elif row > 0:
+                previous_length = len(lines[row - 1])
+                lines[row - 1] += lines.pop(row)
+                row -= 1
+                column = previous_length
+        elif key == term.KEY_DELETE:
+            if column < len(lines[row]):
+                lines[row] = lines[row][:column] + lines[row][column + 1:]
+            elif row < len(lines) - 1:
+                lines[row] += lines.pop(row + 1)
+        elif key == "\t":
+            lines[row] = "  " + lines[row]
+            column += 2
+        elif key == term.KEY_SHIFT_TAB:
+            if lines[row].startswith("\t"):
+                remove_count = 1
+            else:
+                remove_count = min(2, len(lines[row]) - len(lines[row].lstrip(" ")))
+            lines[row] = lines[row][remove_count:]
+            column = max(0, column - remove_count)
+        elif len(key) == 1 and ord(key) >= 32:
+            lines[row] = lines[row][:column] + key + lines[row][column:]
+            column += 1
+
+
 def _render_archive(
     tasks: list[dict],
     hover: int,
@@ -472,7 +775,7 @@ def _render_archive(
     term.reset_cursor()
 
     header = Text(f"archive • {list_name} • ", style="bold")
-    header.append(Text(f"{len(tasks)} tasks", style="dim"))
+    header.append(Text(f"{len(tasks)} items", style="dim"))
     console.print(header)
 
     if mode == "confirm":
@@ -485,7 +788,7 @@ def _render_archive(
     console.print()
 
     if not tasks:
-        console.print(Text("  No archived tasks.", style="dim"))
+        console.print(Text("  No archived items.", style="dim"))
     else:
         max_lines = term_height - 6  # header(2) + blank + bottom blank + divider + hints
         start = scroll
@@ -505,11 +808,14 @@ def _render_archive(
             ts_text = "  ".join(ts_parts)
 
             line = Text(prefix)
+            name_style = "strike bold cyan" if is_hovered else "strike dim"
+            if task.get("is_note"):
+                name_style += " underline"
             if is_hovered:
-                line.append(Text(task["text"], style="strike bold cyan"))
+                line.append(Text(task["text"], style=name_style))
                 line.append(Text(f"  {ts_text}", style="strike dim"))
             else:
-                line.append(Text(task["text"], style="strike dim"))
+                line.append(Text(task["text"], style=name_style))
                 line.append(Text(f"  {ts_text}", style="strike dim"))
             console.print(line)
 
@@ -524,20 +830,115 @@ def _render_archive(
     sys.stdout.flush()
 
 
+def _render_archived_lists(
+    lists: list[dict],
+    hover: int,
+    mode: str = "normal",
+    confirm_msg: str = "",
+) -> None:
+    term.reset_cursor()
+    width = min(console.width or 80, 100)
+
+    header = Text("lists archive • ", style="bold")
+    header.append(Text(f"{len(lists)} lists", style="dim"))
+    console.print(header, end="\033[K\n")
+    console.print(Text("─" * width, style="dim"), end="\033[K\n")
+    console.print(end="\033[K\n")
+
+    if not lists:
+        console.print(Text("  No archived lists.", style="dim"), end="\033[K\n")
+    else:
+        visible_rows = max(3, (console.height or 24) - 7)
+        start = max(0, hover - visible_rows + 1)
+        end = min(len(lists), start + visible_rows)
+        for index in range(start, end):
+            archived_list = lists[index]
+            selected = index == hover
+            prefix = "▸ " if selected else "  "
+            style = "strike bold cyan" if selected else "strike dim"
+            line = Text(prefix)
+            line.append(Text(archived_list["name"], style=style))
+            if db.is_list_encryption_enabled(archived_list["name"]):
+                line.append(Text(" 🔒", style="dim"))
+            archived_at = _fmt_timestamp(archived_list["archived_at"])
+            line.append(Text(f"  archived {archived_at}", style="dim"))
+            console.print(line, end="\033[K\n")
+
+    if mode == "confirm":
+        console.print(end="\033[K\n")
+        console.print(Text(f"  {confirm_msg}", style="yellow bold"), end="\033[K\n")
+
+    console.print(end="\033[K\n")
+    console.print(Text("─" * width, style="dim"), end="\033[K\n")
+    if mode == "confirm":
+        hint = "  Enter:confirm permanent delete │ Esc:cancel"
+    else:
+        hint = "  Enter/r:restore │ d:delete permanently │ ↑/↓:navigate │ q:return"
+    console.print(Text(hint, style="dim"), end="\033[K\n")
+    sys.stdout.write("\033[J")
+    sys.stdout.flush()
+
+
+def _run_archived_lists_loop() -> None:
+    hover = 0
+    mode = "normal"
+    confirm_name = ""
+
+    while True:
+        lists = db.get_archived_lists()
+        if lists:
+            hover = min(hover, len(lists) - 1)
+        else:
+            hover = 0
+        confirm_msg = (
+            f'Delete archived list "{confirm_name}" and all its items permanently?'
+            if mode == "confirm"
+            else ""
+        )
+        _render_archived_lists(lists, hover, mode, confirm_msg)
+        key = term.read_key()
+
+        if mode == "confirm":
+            if key in (term.KEY_ENTER, "y"):
+                db.delete_list(confirm_name)
+            mode = "normal"
+            confirm_name = ""
+            continue
+
+        if key in ("q", term.KEY_ESC):
+            return
+        if key in (term.KEY_ARROW_UP, "k"):
+            hover = max(0, hover - 1)
+        elif key in (term.KEY_ARROW_DOWN, "j"):
+            if hover < len(lists) - 1:
+                hover += 1
+        elif key in (term.KEY_ENTER, "r"):
+            if lists:
+                db.restore_list(lists[hover]["name"])
+        elif key == "d":
+            if lists:
+                confirm_name = lists[hover]["name"]
+                mode = "confirm"
+
+
 def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
     hover = 0
     mode = "normal"
-    view = "tasks"  # can be "tasks" or "lists_menu"
+    active_lists = db.get_all_lists()
+    view = "lists_menu" if not active_lists and not lock_list else "tasks"
     edit_task_id: int | None = None
+    edit_note_id: int | None = None
     edit_text = ""
     edit_cursor = 0
-    confirm_action: str = ""  # "delete", "archive", "delete_list"
+    confirm_action: str = ""  # task and list confirmation action
     confirm_task_id: int | None = None
     confirm_list_name = ""
     status_msg = ""
     lists_scroll = 0
 
     current_list = list_name
+    if not lock_list and active_lists and current_list not in active_lists:
+        current_list = active_lists[0]
 
     while True:
         if mode == "help":
@@ -548,7 +949,14 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
             mode = "normal"
             continue
 
-        tasks = db.get_active_tasks(current_list)
+        if view == "tasks" and not _ensure_list_unlocked(current_list):
+            if lock_list:
+                return
+            view = "lists_menu"
+            hover = 0
+            continue
+
+        tasks = db.get_active_tasks(current_list) if view == "tasks" else []
         
         # Determine and clamp hovers
         if mode == "fuzzy_list":
@@ -599,6 +1007,8 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
             confirm_msg = f'Delete "{task_text}"?'
         elif mode == "confirm" and confirm_action == "delete_list":
             confirm_msg = f'Delete list "{confirm_list_name}"? All tasks inside will be permanently lost!'
+        elif mode == "confirm" and confirm_action == "archive_list":
+            confirm_msg = f'Archive list "{confirm_list_name}"? Its items will be preserved.'
         else:
             confirm_msg = ""
 
@@ -677,6 +1087,20 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         mode = "edit"
                         edit_text = lists[hover]
                         edit_cursor = len(edit_text)
+                elif key == "A":
+                    lists = db.get_all_lists()
+                    if lists:
+                        confirm_list_name = lists[hover]
+                        confirm_action = "archive_list"
+                        mode = "confirm"
+                elif key == ",":
+                    term.clear_screen()
+                    _run_archived_lists_loop()
+                    active_lists = db.get_all_lists()
+                    if active_lists and current_list not in active_lists:
+                        current_list = active_lists[0]
+                    hover = min(hover, max(0, len(active_lists) - 1))
+                    term.clear_screen()
                 elif key == "d":
                     lists = db.get_all_lists()
                     if lists:
@@ -770,8 +1194,18 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         status_msg = f"max tasks reached ({limit})"
                 elif key in (term.KEY_ENTER, "e"):
                     if tasks:
+                        if tasks[hover].get("is_note"):
+                            _run_note_editor(tasks[hover]["note_id"])
+                            term.clear_screen()
+                        else:
+                            mode = "edit"
+                            edit_task_id = tasks[hover]["id"]
+                            edit_text = tasks[hover]["text"]
+                            edit_cursor = len(edit_text)
+                elif key == "E":
+                    if tasks and tasks[hover].get("is_note"):
                         mode = "edit"
-                        edit_task_id = tasks[hover]["id"]
+                        edit_note_id = tasks[hover]["note_id"]
                         edit_text = tasks[hover]["text"]
                         edit_cursor = len(edit_text)
                 elif key == "a":
@@ -787,6 +1221,14 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                             mode = "edit"
                     else:
                         status_msg = f"max tasks reached ({limit})"
+                elif key == "A":
+                    limit = db.get_max_tasks(current_list)
+                    if len(tasks) < limit:
+                        edit_text = _default_note_title()
+                        edit_cursor = len(edit_text)
+                        mode = "new_note"
+                    else:
+                        status_msg = f"max items reached ({limit})"
                 elif key == "d":
                     if tasks:
                         confirm_action = "delete"
@@ -843,6 +1285,13 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         current_list = lists[0] if lists else "main"
                     hover = 0
                     view = "lists_menu"
+                elif confirm_action == "archive_list":
+                    db.archive_list(confirm_list_name)
+                    lists = db.get_all_lists()
+                    if current_list == confirm_list_name:
+                        current_list = lists[0] if lists else "main"
+                    hover = min(hover, max(0, len(lists) - 1))
+                    view = "lists_menu"
                 mode = "normal"
                 confirm_action = ""
                 confirm_task_id = None
@@ -861,10 +1310,13 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         db.delete_task(edit_task_id)
                 mode = "normal"
                 edit_task_id = None
+                edit_note_id = None
                 edit_text = ""
                 edit_cursor = 0
             elif key == term.KEY_ENTER:
-                if view == "tasks" and edit_task_id:
+                if view == "tasks" and edit_note_id:
+                    db.update_note_title(edit_note_id, edit_text)
+                elif view == "tasks" and edit_task_id:
                     db.update_task_text(edit_task_id, edit_text)
                 elif view == "lists_menu":
                     lists = db.get_all_lists()
@@ -875,6 +1327,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                                 current_list = edit_text.strip()
                 mode = "normal"
                 edit_task_id = None
+                edit_note_id = None
                 edit_text = ""
                 edit_cursor = 0
             elif key == term.KEY_BACKSPACE:
@@ -894,6 +1347,43 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                 edit_cursor = len(edit_text)
             elif key in (term.KEY_ARROW_UP, term.KEY_ARROW_DOWN):
                 pass
+            elif len(key) == 1 and ord(key) >= 32:
+                edit_text = edit_text[:edit_cursor] + key + edit_text[edit_cursor:]
+                edit_cursor += 1
+
+        elif mode == "new_note":
+            if key == term.KEY_ESC:
+                mode = "normal"
+                edit_text = ""
+                edit_cursor = 0
+            elif key == term.KEY_ENTER:
+                new_note = db.add_note(edit_text, current_list)
+                mode = "normal"
+                edit_text = ""
+                edit_cursor = 0
+                if new_note:
+                    tasks = db.get_active_tasks(current_list)
+                    hover = next(
+                        (i for i, task in enumerate(tasks) if task.get("note_id") == new_note["id"]),
+                        max(0, len(tasks) - 1),
+                    )
+                    _run_note_editor(new_note["id"])
+                    term.clear_screen()
+            elif key == term.KEY_BACKSPACE:
+                if edit_cursor > 0:
+                    edit_text = edit_text[:edit_cursor - 1] + edit_text[edit_cursor:]
+                    edit_cursor -= 1
+            elif key == term.KEY_DELETE:
+                if edit_cursor < len(edit_text):
+                    edit_text = edit_text[:edit_cursor] + edit_text[edit_cursor + 1:]
+            elif key == term.KEY_ARROW_LEFT:
+                edit_cursor = max(0, edit_cursor - 1)
+            elif key == term.KEY_ARROW_RIGHT:
+                edit_cursor = min(len(edit_text), edit_cursor + 1)
+            elif key == term.KEY_HOME:
+                edit_cursor = 0
+            elif key == term.KEY_END:
+                edit_cursor = len(edit_text)
             elif len(key) == 1 and ord(key) >= 32:
                 edit_text = edit_text[:edit_cursor] + key + edit_text[edit_cursor:]
                 edit_cursor += 1
@@ -1084,21 +1574,37 @@ def _render_settings(
         starred_line.append(Text(str(max_starred), style="dim"))
     console.print(starred_line, end="\033[K\n")
 
-    # Encryption row
+    # Database encryption row
     is_hovered_enc = hover == 2
     prefix_enc = "▸ " if is_hovered_enc else "  "
     enc_line = Text(prefix_enc)
     enc_status = "enabled" if db.is_encryption_enabled() else "disabled"
     if is_hovered_enc:
-        enc_line.append(Text("encryption: ", style="cyan bold"))
+        enc_line.append(Text("database encryption: ", style="cyan bold"))
         enc_line.append(Text(enc_status, style="bold"))
     else:
-        enc_line.append(Text("encryption: ", style="dim"))
+        enc_line.append(Text("database encryption: ", style="dim"))
         enc_line.append(Text(enc_status, style="dim"))
     console.print(enc_line, end="\033[K\n")
 
+    # Current-list encryption row
+    is_hovered_list_enc = hover == 3
+    prefix_list_enc = "▸ " if is_hovered_list_enc else "  "
+    list_enc_line = Text(prefix_list_enc)
+    if db.is_list_encryption_enabled(list_name):
+        list_enc_status = "unlocked" if db.is_list_unlocked(list_name) else "locked"
+    else:
+        list_enc_status = "disabled"
+    if is_hovered_list_enc:
+        list_enc_line.append(Text(f"list encryption ({list_name}): ", style="cyan bold"))
+        list_enc_line.append(Text(list_enc_status, style="bold"))
+    else:
+        list_enc_line.append(Text(f"list encryption ({list_name}): ", style="dim"))
+        list_enc_line.append(Text(list_enc_status, style="dim"))
+    console.print(list_enc_line, end="\033[K\n")
+
     # Update row
-    is_hovered_update = hover == 3
+    is_hovered_update = hover == 4
     prefix2 = "▸ " if is_hovered_update else "  "
     update_line = Text(prefix2)
     if is_hovered_update:
@@ -1108,10 +1614,10 @@ def _render_settings(
     console.print(update_line, end="\033[K\n")
 
     # Export row
-    is_hovered_export = hover == 4
+    is_hovered_export = hover == 5
     prefix_exp = "▸ " if is_hovered_export else "  "
     export_line = Text(prefix_exp)
-    if mode == "edit" and hover == 4:
+    if mode == "edit" and hover == 5:
         export_line.append(Text("export database: ", style="cyan bold"))
         export_line.append(Text(edit_text[:edit_cursor], style="yellow bold"))
         char_under = edit_text[edit_cursor] if edit_cursor < len(edit_text) else " "
@@ -1125,10 +1631,10 @@ def _render_settings(
     console.print(export_line, end="\033[K\n")
 
     # Import row
-    is_hovered_import = hover == 5
+    is_hovered_import = hover == 6
     prefix_imp = "▸ " if is_hovered_import else "  "
     import_line = Text(prefix_imp)
-    if mode == "edit" and hover == 5:
+    if mode == "edit" and hover == 6:
         import_line.append(Text("import database: ", style="cyan bold"))
         import_line.append(Text(edit_text[:edit_cursor], style="yellow bold"))
         char_under = edit_text[edit_cursor] if edit_cursor < len(edit_text) else " "
@@ -1158,7 +1664,7 @@ def _run_settings_loop(list_name: str) -> None:
     edit_text = ""
     edit_cursor = 0
     status_msg = ""
-    num_items = 6  # max_tasks, max_starred_tasks, encryption, update, export, import
+    num_items = 7
 
     while True:
         _render_settings(list_name, hover, mode, edit_text, edit_cursor, status_msg)
@@ -1183,17 +1689,19 @@ def _run_settings_loop(list_name: str) -> None:
                     mode = "edit"
                     edit_text = str(db.get_max_starred_tasks())
                     edit_cursor = len(edit_text)
-                elif hover == 4:
+                elif hover == 5:
                     mode = "edit"
                     edit_text = "backup.json"
                     edit_cursor = len(edit_text)
-                elif hover == 5:
+                elif hover == 6:
                     mode = "edit"
                     edit_text = "backup.json"
                     edit_cursor = len(edit_text)
                 elif hover == 2:
                     # Toggle encryption
-                    if not db.is_encryption_enabled():
+                    if not db.is_encryption_enabled() and db.get_encrypted_lists():
+                        status_msg = "✗ disable list encryption first"
+                    elif not db.is_encryption_enabled():
                         # Prompt warning
                         term.clear_screen()
                         console.print()
@@ -1211,8 +1719,11 @@ def _run_settings_loop(list_name: str) -> None:
                             if password:
                                 confirm = prompt_password("Confirm password: ")
                                 if password == confirm:
-                                    db.enable_encryption(password)
-                                    status_msg = "✓ database encrypted successfully"
+                                    try:
+                                        db.enable_encryption(password)
+                                        status_msg = "✓ database encrypted successfully"
+                                    except ValueError as error:
+                                        status_msg = f"✗ {error}"
                                 else:
                                     status_msg = "✗ passwords do not match"
                             else:
@@ -1227,6 +1738,45 @@ def _run_settings_loop(list_name: str) -> None:
                             else:
                                 status_msg = "✗ incorrect password"
                 elif hover == 3:
+                    if db.is_encryption_enabled():
+                        status_msg = "✗ disable database encryption first"
+                    elif not db.is_list_encryption_enabled(list_name):
+                        term.clear_screen()
+                        console.print()
+                        console.print(Text(
+                            f'  Encrypt list "{list_name}" and all its tasks and notes?',
+                            style="yellow bold",
+                        ))
+                        console.print(Text(
+                            "  Forgotten passwords cannot be recovered.", style="yellow bold"
+                        ))
+                        console.print()
+                        console.print(Text("  Press Enter to continue, or Esc to cancel...", style="dim"))
+                        confirm_key = ""
+                        while confirm_key not in (term.KEY_ENTER, "\r", "\n", term.KEY_ESC):
+                            confirm_key = term.read_key()
+                        if confirm_key in (term.KEY_ENTER, "\r", "\n"):
+                            password = prompt_password(f'Create password for list "{list_name}": ')
+                            confirm = prompt_password("Confirm password: ") if password else ""
+                            if not password:
+                                status_msg = "✗ password cannot be empty"
+                            elif password != confirm:
+                                status_msg = "✗ passwords do not match"
+                            else:
+                                try:
+                                    db.enable_list_encryption(list_name, password)
+                                    status_msg = f'✓ list "{list_name}" encrypted'
+                                except ValueError as error:
+                                    status_msg = f"✗ {error}"
+                        else:
+                            status_msg = "cancelled"
+                    else:
+                        password = prompt_password(f'Enter password to decrypt list "{list_name}": ')
+                        if password and db.disable_list_encryption(list_name, password):
+                            status_msg = f'✓ list "{list_name}" encryption disabled'
+                        else:
+                            status_msg = "✗ incorrect password"
+                elif hover == 4:
                     # Run update
                     import subprocess
                     result = subprocess.run(
@@ -1284,7 +1834,7 @@ def _run_settings_loop(list_name: str) -> None:
                     except ValueError:
                         cap = max(20, db.get_max_tasks(list_name))
                         status_msg = f"✗ must be an integer between 1 and {cap}"
-                elif hover == 4:
+                elif hover == 5:
                     try:
                         filename = edit_text.strip()
                         if not filename:
@@ -1295,7 +1845,7 @@ def _run_settings_loop(list_name: str) -> None:
                         status_msg = f"✓ database exported to {filename}"
                     except Exception as e:
                         status_msg = f"✗ export failed: {e}"
-                elif hover == 5:
+                elif hover == 6:
                     try:
                         filename = edit_text.strip()
                         if not filename:
@@ -1359,7 +1909,7 @@ def _run_settings_loop(list_name: str) -> None:
                 edit_cursor = 0
             elif key == term.KEY_END:
                 edit_cursor = len(edit_text)
-            elif len(key) == 1 and (key.isdigit() or (hover in (4, 5) and ord(key) >= 32)):
+            elif len(key) == 1 and (key.isdigit() or (hover in (5, 6) and ord(key) >= 32)):
                 edit_text = edit_text[:edit_cursor] + key + edit_text[edit_cursor:]
                 edit_cursor += 1
 
@@ -1369,6 +1919,8 @@ def run_settings(list_name: str = "main") -> None:
     with term.raw_mode():
         try:
             if not _ensure_unlocked():
+                return
+            if not _ensure_list_unlocked(list_name):
                 return
             _run_settings_loop(list_name)
         except KeyboardInterrupt:
@@ -1396,6 +1948,8 @@ def run_archive(list_name: str = "main", lock_list: bool = False) -> None:
     with term.raw_mode():
         try:
             if not _ensure_unlocked():
+                return
+            if not _ensure_list_unlocked(list_name):
                 return
             _run_archive_loop(list_name, lock_list)
         except KeyboardInterrupt:

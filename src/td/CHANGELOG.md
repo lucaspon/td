@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.0] - 2026-08-03
+- Add task-backed Markdown notes with a full-screen editor and live line preview.
+- Add `A` to create notes, `e`/`Enter` to edit note bodies, and `E` to rename notes.
+- Include notes in encryption, JSON backup and restore, list ordering, and task lifecycle actions.
+- Add line movement, line clearing, word navigation, word deletion, and indentation controls to the note editor.
+- Add restorable list archiving with preserved tasks, notes, settings, and JSON backup state.
+- Auto-indent and continue Markdown bullets; exit empty continuation with Enter or Backspace.
+- Add independent password encryption per list with portable encrypted backups and lazy unlock prompts.
+- Add agent-friendly notes CLI with CRUD actions, JSON output, and file or stdin bodies.
+
 ## [0.1.5]
 - Fix Windows keyboard input: arrow keys, Home/End, Delete, and Ctrl/Alt+arrow now work by decoding the native Windows scancode protocol instead of assuming ANSI escape sequences.
 - Fix clipboard copy (`y`) on Windows by using the `clip` command.

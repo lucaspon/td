@@ -21,11 +21,21 @@ KEY_HOME = "\x1b[H"
 KEY_END = "\x1b[F"
 KEY_SHIFT_ARROW_UP = "\x1b[1;2A"
 KEY_SHIFT_ARROW_DOWN = "\x1b[1;2B"
+KEY_SHIFT_TAB = "\x1b[Z"
 KEY_ALT_ARROW_UP = "\x1b[1;3A"
 KEY_ALT_ARROW_DOWN = "\x1b[1;3B"
+KEY_ALT_ARROW_LEFT = "\x1b[1;3D"
+KEY_ALT_ARROW_RIGHT = "\x1b[1;3C"
+KEY_ALT_WORD_LEFT = "\x1bb"
+KEY_ALT_WORD_RIGHT = "\x1bf"
+KEY_ALT_BACKSPACE = "\x1b\x7f"
+KEY_ALT_BACKSPACE_BS = "\x1b\x08"
 KEY_CTRL_ARROW_UP = "\x1b[1;5A"
 KEY_CTRL_ARROW_DOWN = "\x1b[1;5B"
+KEY_CTRL_BACKSPACE = "\x17"
+KEY_CMD_BACKSPACE = "\x15"
 KEY_CTRL_P = "\x10"
+KEY_CTRL_S = "\x13"
 
 
 if IS_WINDOWS:
@@ -43,10 +53,13 @@ if IS_WINDOWS:
         "G": KEY_HOME,
         "O": KEY_END,
         "S": KEY_DELETE,
+        "\x0f": KEY_SHIFT_TAB,
         "\x8d": KEY_CTRL_ARROW_UP,
         "\x91": KEY_CTRL_ARROW_DOWN,
         "\x98": KEY_ALT_ARROW_UP,
         "\xa0": KEY_ALT_ARROW_DOWN,
+        "\x9b": KEY_ALT_ARROW_LEFT,
+        "\x9d": KEY_ALT_ARROW_RIGHT,
     }
 
     def _enable_vt_mode() -> None:
@@ -108,7 +121,9 @@ if IS_WINDOWS:
         if ch == "\r":
             return "\n"
         if ch == "\x08":  # Windows backspace
-            return "\x7f"
+            return KEY_BACKSPACE
+        if ch == "\x7f":  # Windows Ctrl+Backspace
+            return KEY_CTRL_BACKSPACE
         return ch
 
 else:

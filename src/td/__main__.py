@@ -45,6 +45,8 @@ def main() -> None:
             from importlib.metadata import version as _pkg_version
             print(f"td {_pkg_version('td-task')}")
             return
+        elif len(args) > 1 and args[1] in ("note", "notes"):
+            _run_notes(list_name, has_list, args)
         elif "-h" in args or "--help" in args or (len(args) > 1 and args[1] in ("help", "-help", "--help")):
             _run_help()
         elif "--dev" in args:
@@ -73,10 +75,10 @@ def main() -> None:
         else:
             from . import db
             lists = db.get_all_lists()
-            if not lists:
+            if not lists and not db.get_archived_lists():
                 db.create_list("main")
                 lists = ["main"]
-            active_list = list_name if has_list else lists[0]
+            active_list = list_name if has_list else (lists[0] if lists else "main")
             run_main(active_list, lock_list=has_list)
     except KeyboardInterrupt:
         sys.exit(0)
@@ -90,15 +92,15 @@ def _run_help() -> None:
     console = Console()
     
     header = Text("td • ", style="bold cyan")
-    header.append(Text("minimal TUI & CLI multi-list todo manager", style="italic dim"))
+    header.append(Text("TUI & CLI manager for tasks and Markdown notes", style="italic dim"))
     console.print(header)
     console.print(Text("─" * 60, style="dim"))
     console.print()
     
     console.print(Text("Description for LLMs & Users:", style="bold yellow"))
     console.print(
-        "  `td` is a production-grade terminal todo application featuring multi-list\n"
-        "  support, encryption, priority starring (pinning), and smooth list transitions.\n"
+        "  `td` is a terminal task and Markdown notes manager featuring multi-list\n"
+        "  workflows, archiving, encryption, priority starring, and a live note editor.\n"
         "  It works seamlessly interactively (TUI) and scriptably (CLI commands).",
         markup=False
     )
@@ -117,6 +119,7 @@ def _run_help() -> None:
     commands_table.add_row("  (default)", "Launch interactive TUI todo app (defaults to 'main' list)")
     commands_table.add_row("  add <text>", "Add a new task to active or specified list")
     commands_table.add_row("  list", "Print active tasks sequentially between dividers")
+    commands_table.add_row("  notes <action>", "Add, list, show, update, or delete Markdown notes")
     commands_table.add_row("  archive", "Open TUI directly in the completed archive screen")
     commands_table.add_row("  export [file]", "Export database to JSON file or print to stdout")
     commands_table.add_row("  import <file>", "Import and merge database records from a JSON file")
@@ -141,14 +144,18 @@ def _run_help() -> None:
     console.print(Text("List Operations & Keybindings:", style="bold yellow"))
     console.print("  • Switch lists: Press Left / Right arrows inside normal TUI mode (unlocked).", markup=False)
     console.print("  • Create lists: Press 'l' inside normal TUI mode, type list name and press Enter.", markup=False)
+    console.print("  • Archive lists: Open Lists Menu, press 'A', then use ',' to restore later.", markup=False)
+    console.print("  • Create notes: Press 'A', confirm the timestamped name, then edit Markdown.", markup=False)
+    console.print("  • Edit notes: Press 'e' or Enter for content, or 'E' for the note name.", markup=False)
     console.print("  • Star / Pin task: Highlight a task and press 's' to pin it to top (bold yellow).", markup=False)
     console.print()
 
 
-def _cli_ensure_unlocked() -> None:
+def _cli_ensure_unlocked(list_name: str | None = None) -> None:
     from . import db
+    import getpass
+
     if db.is_encryption_enabled():
-        import getpass
         attempts = 0
         while attempts < 3:
             prompt_text = "Database is encrypted. Enter password: " if attempts == 0 else f"Incorrect password. Try again: "
@@ -163,6 +170,159 @@ def _cli_ensure_unlocked() -> None:
         print("✗ Too many incorrect attempts. Exiting.")
         sys.exit(1)
 
+    if list_name and db.is_list_encryption_enabled(list_name):
+        attempts = 0
+        while attempts < 3:
+            prompt_text = (
+                f'List "{list_name}" is encrypted. Enter password: '
+                if attempts == 0
+                else "Incorrect password. Try again: "
+            )
+            try:
+                password = getpass.getpass(prompt_text)
+            except (KeyboardInterrupt, EOFError):
+                print("\nCancelled.")
+                sys.exit(0)
+            if db.set_list_encryption_key_from_password(list_name, password):
+                return
+            attempts += 1
+        print("✗ Too many incorrect attempts. Exiting.")
+        sys.exit(1)
+
+
+def _option_value(args: list[str], option: str) -> str | None:
+    prefix = f"{option}="
+    for index, arg in enumerate(args):
+        if arg.startswith(prefix):
+            return arg.split("=", 1)[1]
+        if arg == option and index + 1 < len(args):
+            return args[index + 1]
+    return None
+
+
+def _note_body_from_args(args: list[str]) -> str | None:
+    body = _option_value(args, "--body")
+    body_file = _option_value(args, "--body-file")
+    if body is not None and body_file is not None:
+        raise ValueError("Use either --body or --body-file, not both")
+    if body_file is not None:
+        if body_file == "-":
+            return sys.stdin.read()
+        from pathlib import Path
+        return Path(body_file).read_text(encoding="utf-8")
+    return body
+
+
+def _run_notes(list_name: str, has_list: bool, args: list[str]) -> None:
+    import json
+    from datetime import datetime
+    from . import db
+
+    if len(args) < 3 or args[2] in ("help", "-h", "--help"):
+        print("Usage:")
+        print("  td notes add [title] --list <name> [--body <markdown> | --body-file <path|->] [--json]")
+        print("  td notes list --list <name> [--include-archived] [--json]")
+        print("  td notes show <note-id> [--json]")
+        print("  td notes update <note-id> [--title <title>] [--body <markdown> | --body-file <path|->] [--json]")
+        print("  td notes delete <note-id> [--json]")
+        return
+
+    action = args[2]
+    json_output = "--json" in args
+
+    if action == "add":
+        if not has_list:
+            print("✗ Error: list name is required. Pass --list <name>.")
+            sys.exit(1)
+        _cli_ensure_unlocked(list_name)
+        title_option = _option_value(args, "--title")
+        title = title_option if title_option is not None else (
+            args[3] if len(args) > 3 and not args[3].startswith("--") else ""
+        )
+        title = title.strip() or datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
+        try:
+            body = _note_body_from_args(args)
+        except (OSError, ValueError) as error:
+            print(f"✗ Failed to read note body: {error}")
+            sys.exit(1)
+        note = db.add_note(title, list_name)
+        if note is None:
+            print("✗ Failed to add note (maximum active items reached).")
+            sys.exit(1)
+        if body is not None:
+            db.update_note_content(note["id"], body)
+            note["content"] = body
+        if json_output:
+            print(json.dumps(note, indent=2))
+        else:
+            print(f"✓ Note added to '{list_name}' (note ID: {note['id']}, task ID: {note['task_id']})")
+        return
+
+    if action == "list":
+        if not has_list:
+            print("✗ Error: list name is required. Pass --list <name>.")
+            sys.exit(1)
+        _cli_ensure_unlocked(list_name)
+        notes = db.get_notes_for_list(list_name, "--include-archived" in args)
+        if json_output:
+            print(json.dumps(notes, indent=2))
+        else:
+            for note in notes:
+                print(f"{note['id']}\t{note['status']}\t{note['title']}")
+        return
+
+    if action not in ("show", "update", "delete") or len(args) < 4:
+        print(f"✗ Unknown notes action: {action}")
+        sys.exit(1)
+    try:
+        note_id = int(args[3])
+    except ValueError:
+        print("✗ Note ID must be an integer.")
+        sys.exit(1)
+    note_list = db.get_note_list_name(note_id)
+    if note_list is None:
+        print(f"✗ Note {note_id} not found.")
+        sys.exit(1)
+    _cli_ensure_unlocked(note_list)
+
+    if action == "show":
+        note = db.get_note(note_id)
+        if json_output:
+            print(json.dumps(note, indent=2))
+        else:
+            print(note["content"], end="" if note["content"].endswith("\n") else "\n")
+        return
+
+    if action == "update":
+        title = _option_value(args, "--title")
+        try:
+            body = _note_body_from_args(args)
+        except (OSError, ValueError) as error:
+            print(f"✗ Failed to read note body: {error}")
+            sys.exit(1)
+        if title is None and body is None:
+            print("✗ Pass --title, --body, or --body-file.")
+            sys.exit(1)
+        if title is not None:
+            if not title.strip():
+                print("✗ Note title cannot be empty.")
+                sys.exit(1)
+            db.update_note_title(note_id, title)
+        if body is not None:
+            db.update_note_content(note_id, body)
+        updated = db.get_note(note_id)
+        if json_output:
+            print(json.dumps(updated, indent=2))
+        else:
+            print(f"✓ Note {note_id} updated.")
+        return
+
+    deleted = db.delete_note(note_id)
+    if json_output:
+        print(json.dumps({"id": note_id, "deleted": deleted}))
+    else:
+        print(f"✓ Note {note_id} deleted.")
+
 
 def _run_add(list_name: str, args: list[str]) -> None:
     if len(args) < 3 or not args[2].strip():
@@ -170,7 +330,7 @@ def _run_add(list_name: str, args: list[str]) -> None:
         sys.exit(1)
     
     task_text = args[2].strip()
-    _cli_ensure_unlocked()
+    _cli_ensure_unlocked(list_name)
     
     from . import db
     result = db.add_task(task_text, list_name)
@@ -181,7 +341,7 @@ def _run_add(list_name: str, args: list[str]) -> None:
 
 
 def _run_list(list_name: str) -> None:
-    _cli_ensure_unlocked()
+    _cli_ensure_unlocked(list_name)
     from . import db
     from rich.console import Console
     from rich.text import Text
@@ -211,13 +371,15 @@ def _run_list(list_name: str) -> None:
             
             text = task["text"]
             if is_done:
-                line_text = Text(text, style="strike dim")
+                style = "strike dim underline" if task.get("is_note") else "strike dim"
+                line_text = Text(text, style=style)
                 marker_text = Text(marker, style="green bold")
             elif is_starred:
-                line_text = Text(text, style="bold yellow")
+                style = "bold yellow underline" if task.get("is_note") else "bold yellow"
+                line_text = Text(text, style=style)
                 marker_text = Text(marker, style="bold yellow")
             else:
-                line_text = Text(text)
+                line_text = Text(text, style="underline" if task.get("is_note") else None)
                 marker_text = Text(marker, style="yellow")
                 
             line = Text("  ")
