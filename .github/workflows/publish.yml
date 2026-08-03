@@ -19,7 +19,7 @@ jobs:
           enable-cache: true
 
       - name: Install Doppler CLI
-        run: curl -Ls https://doppler.com/install.sh | bash
+        uses: dopplerhq/cli-action@v3
 
       - name: Set up Python
         uses: actions/setup-python@v5
