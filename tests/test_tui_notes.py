@@ -6,7 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from rich.cells import cell_len
 from rich.console import Console
+from rich.text import Text
 
 from td import db, terminal, tui
 
@@ -99,6 +101,52 @@ class NoteTuiTests(unittest.TestCase):
         self.assertEqual(inline.plain, "bold and italic")
         self.assertIn("bold", str(inline.spans[0].style))
         self.assertIn("italic", str(inline.spans[1].style))
+
+    def test_note_editor_wrap_preserves_every_character(self) -> None:
+        source = Text("alpha  beta gamma-supercalifragilistic", style="bold")
+        wrapped = tui._wrap_editor_text(source, 8)
+
+        self.assertEqual("".join(part.plain for part in wrapped), source.plain)
+        self.assertTrue(all(cell_len(part.plain) <= 8 for part in wrapped))
+        self.assertTrue(all("bold" in str(part.style) for part in wrapped))
+
+    def test_note_editor_cursor_follows_wrapped_line(self) -> None:
+        line = "one two three four five six"
+        visual_rows, cursor_row = tui._note_editor_visual_rows(
+            [line], 0, len(line), 7
+        )
+
+        self.assertGreater(len(visual_rows), 1)
+        self.assertEqual(visual_rows[cursor_row][0], 0)
+        self.assertTrue(any(
+            "reverse" in str(span.style)
+            for span in visual_rows[cursor_row][2].spans
+        ))
+
+    def test_note_editor_scroll_tracks_wrapped_cursor(self) -> None:
+        note = db.add_note("Wrapping")
+        assert note is not None
+        db.update_note_content(note["id"], "word " * 40)
+        scroll_positions: list[int] = []
+        test_console = Console(file=io.StringIO(), width=30, height=10, force_terminal=False)
+        keys = iter([terminal.KEY_END, terminal.KEY_ESC])
+
+        with (
+            patch.object(tui, "console", test_console),
+            patch.object(terminal, "read_key", side_effect=lambda: next(keys)),
+            patch.object(terminal, "clear_screen"),
+            patch.object(
+                tui,
+                "_render_note_editor",
+                side_effect=lambda _title, _lines, _row, _column, scroll, _status: (
+                    scroll_positions.append(scroll)
+                ),
+            ),
+        ):
+            tui._run_note_editor(note["id"])
+
+        self.assertEqual(scroll_positions[0], 0)
+        self.assertGreater(scroll_positions[-1], 0)
 
     def test_alt_arrows_move_editor_lines(self) -> None:
         note = db.add_note("Movement")

@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.1] - 2026-08-04
+- Soft-wrap long note lines to terminal width without changing stored Markdown.
+- Keep Markdown preview styling across wrapped rows and scroll with the active cursor.
+
 ## [0.2.0] - 2026-08-03
 - Add task-backed Markdown notes with a full-screen editor and live line preview.
 - Add `A` to create notes, `e`/`Enter` to edit note bodies, and `E` to rename notes.

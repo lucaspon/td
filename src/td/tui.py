@@ -573,6 +573,78 @@ def _bullet_line_parts(source: str) -> tuple[str, str, str] | None:
     return match.group(1), match.group(2), match.group(3)
 
 
+def _wrap_editor_text(source: Text, width: int) -> list[Text]:
+    """Soft-wrap styled text without changing or dropping source characters."""
+    from rich.cells import cell_len
+
+    width = max(1, width)
+    plain = source.plain
+    if not plain:
+        return [Text()]
+
+    offsets: list[tuple[int, int]] = []
+    start = 0
+    while start < len(plain):
+        end = start
+        used = 0
+        last_break: int | None = None
+        has_content = False
+
+        while end < len(plain):
+            char_width = cell_len(plain[end])
+            if end > start and used + char_width > width:
+                break
+            used += char_width
+            end += 1
+            if plain[end - 1].isspace() and has_content:
+                last_break = end
+            elif not plain[end - 1].isspace():
+                has_content = True
+            if used >= width:
+                break
+
+        if end < len(plain) and last_break is not None and last_break > start:
+            end = last_break
+        if end == start:
+            end += 1
+
+        offsets.append((start, end))
+        start = end
+
+    return [source[start:end] for start, end in offsets]
+
+
+def _note_editor_visual_rows(
+    lines: list[str],
+    active_row: int,
+    column: int,
+    content_width: int,
+) -> tuple[list[tuple[int, int, Text]], int]:
+    """Build wrapped display rows and return the active cursor row index."""
+    visual_rows: list[tuple[int, int, Text]] = []
+    cursor_visual_row = 0
+
+    for line_index, line in enumerate(lines):
+        if line_index == active_row:
+            rendered = Text(line, style="cyan bold")
+            if column < len(line):
+                rendered.stylize("reverse cyan bold", column, column + 1)
+            else:
+                rendered.append(" ", style="reverse cyan bold")
+            wrapped = _wrap_editor_text(rendered, content_width)
+        else:
+            wrapped = _wrap_editor_text(_markdown_preview_line(line), content_width)
+
+        for segment_index, segment in enumerate(wrapped):
+            visual_rows.append((line_index, segment_index, segment))
+            if line_index == active_row and any(
+                "reverse" in str(span.style) for span in segment.spans
+            ):
+                cursor_visual_row = len(visual_rows) - 1
+
+    return visual_rows, cursor_visual_row
+
+
 def _render_note_editor(
     title: str,
     lines: list[str],
@@ -592,28 +664,21 @@ def _render_note_editor(
     console.print(Text("─" * width, style="dim"), end="\033[K\n")
 
     visible_rows = max(3, height - 6)
-    end = min(len(lines), scroll + visible_rows)
     number_width = max(2, len(str(len(lines))))
     content_width = max(10, width - number_width - 5)
+    visual_rows, _ = _note_editor_visual_rows(lines, row, column, content_width)
+    visible = visual_rows[scroll:scroll + visible_rows]
 
-    for line_index in range(scroll, end):
-        prefix = f"{'▸' if line_index == row else ' '} {line_index + 1:>{number_width}} │ "
-        line = lines[line_index]
-        output = Text(prefix, style="cyan bold" if line_index == row else "dim")
-        if line_index == row:
-            offset = max(0, column - content_width + 1)
-            visible = line[offset:offset + content_width]
-            visible_column = column - offset
-            output.append(visible[:visible_column], style="cyan bold")
-            char_under = visible[visible_column] if visible_column < len(visible) else " "
-            output.append(char_under, style="reverse cyan bold")
-            if visible_column < len(visible):
-                output.append(visible[visible_column + 1:], style="cyan bold")
+    for line_index, segment_index, segment in visible:
+        if segment_index == 0:
+            prefix = f"{'▸' if line_index == row else ' '} {line_index + 1:>{number_width}} │ "
         else:
-            output.append(_markdown_preview_line(line))
+            prefix = f"  {'':>{number_width}} │ "
+        output = Text(prefix, style="cyan bold" if line_index == row else "dim")
+        output.append(segment)
         console.print(output, end="\033[K\n", overflow="crop", no_wrap=True)
 
-    for _ in range(visible_rows - (end - scroll)):
+    for _ in range(visible_rows - len(visible)):
         console.print(end="\033[K\n")
 
     footer = "  Esc:save & close │ Ctrl+S:save │ Enter:new line │ arrows:move"
@@ -643,10 +708,14 @@ def _run_note_editor(note_id: int) -> None:
 
     while True:
         visible_rows = max(3, (console.height or 24) - 6)
-        if row < scroll:
-            scroll = row
-        elif row >= scroll + visible_rows:
-            scroll = row - visible_rows + 1
+        width = max(30, console.width or 80)
+        number_width = max(2, len(str(len(lines))))
+        content_width = max(10, width - number_width - 5)
+        _, cursor_visual_row = _note_editor_visual_rows(lines, row, column, content_width)
+        if cursor_visual_row < scroll:
+            scroll = cursor_visual_row
+        elif cursor_visual_row >= scroll + visible_rows:
+            scroll = cursor_visual_row - visible_rows + 1
         _render_note_editor(note["title"], lines, row, column, scroll, status_msg)
         status_msg = ""
         key = term.read_key()
