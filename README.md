@@ -17,6 +17,17 @@ Or with pip:
 pip install td-task
 ```
 
+## Local publishing environment
+
+PyPI credentials live in the ignored `.env` file. The encrypted backup is
+`.env.enc`.
+
+```nu
+^age --decrypt .env.enc | save --force .env
+```
+
+Never print decrypted secrets or commit `.env`.
+
 Run directly without installing:
 
 ```bash
