@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.2] - 2026-08-05
+- Fix `td update` silently reporting "already up-to-date" on installs made from a local checkout.
+- Pull the source checkout with `git pull --ff-only` and force a rebuild before upgrading such installs.
+- Abort the update instead of rebuilding stale code when the pull fails.
+
 ## [0.2.1] - 2026-08-04
 - Soft-wrap long note lines to terminal width without changing stored Markdown.
 - Keep Markdown preview styling across wrapped rows and scroll with the active cursor.

@@ -393,13 +393,72 @@ def _run_list(list_name: str) -> None:
     console.print(Text("─" * width, style="dim"))
 
 
-def _run_update() -> None:
-    """Update td to the latest version from PyPI."""
+def _source_checkout() -> str | None:
+    """Return the git checkout td was installed from, or None for a PyPI install."""
     import subprocess
+    import tomllib
+
+    try:
+        result = subprocess.run(
+            ["uv", "tool", "dir"], capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        receipt = os.path.join(result.stdout.strip(), "td-task", "uv-receipt.toml")
+        with open(receipt, "rb") as f:
+            data = tomllib.load(f)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+    for requirement in data.get("tool", {}).get("requirements", []):
+        directory = requirement.get("directory")
+        if directory and os.path.isdir(os.path.join(directory, ".git")):
+            return directory
+    return None
+
+
+def _source_version(source_dir: str) -> str | None:
+    """Read the version declared by the source checkout's pyproject.toml."""
+    import tomllib
+
+    try:
+        with open(os.path.join(source_dir, "pyproject.toml"), "rb") as f:
+            return tomllib.load(f).get("project", {}).get("version")
+    except (OSError, ValueError):
+        return None
+
+
+def _run_update() -> None:
+    """Update td to the latest version, from the local checkout when installed from one."""
+    import subprocess
+    from importlib.metadata import version as _pkg_version
+
+    upgrade_cmd = ["uv", "tool", "upgrade", "td-task"]
+    source_dir = _source_checkout()
+
+    if source_dir:
+        print(f"Pulling latest source from {source_dir}...")
+        pull = subprocess.run(
+            ["git", "-C", source_dir, "pull", "--ff-only"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if pull.returncode != 0:
+            print(f"✗ git pull failed: {pull.stderr.strip()}")
+            sys.exit(1)
+        try:
+            installed = _pkg_version("td-task")
+        except Exception:
+            installed = None
+        if installed and _source_version(source_dir) == installed:
+            print("already up-to-date.")
+            return
+        # A path install keeps resolving to the same requirement, so uv reports
+        # nothing to upgrade unless the rebuild is forced.
+        upgrade_cmd.append("--reinstall")
+
     print("Updating td...")
     result = subprocess.run(
-        ["uv", "tool", "upgrade", "td-task"],
-        capture_output=True, text=True, timeout=60,
+        upgrade_cmd, capture_output=True, text=True, timeout=300,
     )
     if result.returncode == 0:
         output = (result.stdout + result.stderr).strip()
