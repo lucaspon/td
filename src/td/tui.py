@@ -155,7 +155,7 @@ def _ensure_list_unlocked(list_name: str) -> bool:
 
 
 def _normal_hint_text(lock_list: bool = False) -> str:
-    parts = ["a:task", "A:note", "e/Enter:edit", "E:rename note", "d:delete", "Space:done", "s:star", "c:clear"]
+    parts = ["f:filter", "a:task", "A:note", "e/Enter:edit", "E:rename note", "d:delete", "Space:done", "s:star", "c:clear"]
     if not lock_list:
         parts.append("l:view lists")
     parts.append("q:quit")
@@ -185,6 +185,7 @@ def _render_help_screen(lock_list: bool = False) -> None:
     console.print("  s           Toggle star/priority (pin to top)")
     console.print("  c           Archive all completed tasks")
     console.print("  y           Copy active tasks in list to clipboard")
+    console.print("  f           Filter notes by title in current list")
     console.print()
 
     console.print(Text("Note Editor:", style="bold yellow"))
@@ -237,7 +238,7 @@ def _render_help_screen(lock_list: bool = False) -> None:
 
 def _task_visible_rows(mode: str, status_msg: str, term_height: int) -> int:
     """Return task rows that fit above the footer and transient messages."""
-    reserved_rows = 2 if mode in ("new_note", "confirm") or status_msg else 0
+    reserved_rows = 2 if mode in ("new_note", "note_filter", "confirm") or status_msg else 0
     return max(1, term_height - 6 - reserved_rows)
 
 
@@ -308,6 +309,19 @@ def _task_page_hover(
     return 0
 
 
+def _filter_notes(tasks: list[dict], query: str) -> list[dict]:
+    """Return notes whose titles contain the case-insensitive query."""
+    normalized_query = query.strip().casefold()
+    if not normalized_query:
+        return tasks
+    return [
+        task
+        for task in tasks
+        if task.get("is_note")
+        and normalized_query in task.get("text", "").casefold()
+    ]
+
+
 @_buffered_frame
 def _render_main(
     tasks: list[dict],
@@ -323,6 +337,7 @@ def _render_main(
     lists_scroll: int = 0,
     tasks_scroll: int = 0,
     fuzzy_scroll: int = 0,
+    note_filter: str = "",
 ) -> None:
     divider_width = min(len(_normal_hint_text(lock_list)), console.width or 80)
 
@@ -331,7 +346,7 @@ def _render_main(
         header = Text("td • ", style="bold")
         header.append(Text("lists menu", style="bold cyan"))
         header.append(Text(f" • {len(lists)} lists", style="dim"))
-        console.print(header, end="\033[K\n")
+        console.print(header, end="\033[K\n", overflow="crop", no_wrap=True)
     else:
         open_count = sum(1 for t in tasks if t["status"] == "active")
         completed_count = db.get_completed_count(list_name)
@@ -341,7 +356,10 @@ def _render_main(
         header.append(Text(f"{open_count} open", style="dim"))
         header.append(Text(" / ", style="dim"))
         header.append(Text(f"{completed_count} completed", style="dim"))
-        console.print(header, end="\033[K\n")
+        if note_filter:
+            header.append(Text(" • ", style="dim"))
+            header.append(Text(f'filter: "{note_filter}"', style="bold yellow"))
+        console.print(header, end="\033[K\n", overflow="crop", no_wrap=True)
 
     # Determine hints
     if mode == "edit":
@@ -357,6 +375,8 @@ def _render_main(
         hint_parts = ["Enter:confirm", "Esc:cancel"]
     elif mode == "fuzzy_list":
         hint_parts = ["Esc:cancel", "Enter:go to list", "↑/↓:navigate", "PgUp/PgDn:page"]
+    elif mode == "note_filter":
+        hint_parts = ["Esc:cancel", "Enter:apply", "type:filter note titles", "empty:clear"]
     else:
         # mode == "normal"
         if view == "lists_menu":
@@ -365,7 +385,7 @@ def _render_main(
                 "Enter:open", "q:quit",
             ]
         else:
-            hint_parts = ["PgUp/PgDn:page", "a:task", "A:note", "e/Enter:edit", "E:rename note", "d:delete", "Space:done", "s:star", "c:clear"]
+            hint_parts = ["PgUp/PgDn:page", "f:filter", "a:task", "A:note", "e/Enter:edit", "E:rename note", "d:delete", "Space:done", "s:star", "c:clear"]
             if not lock_list:
                 hint_parts.append("l:view lists")
             hint_parts.append("q:quit")
@@ -582,7 +602,12 @@ def _render_main(
             prev_starred = is_starred
 
         if not tasks:
-            lines.append(Text("  No items. Press a for a task or A for a note.", style="dim"))
+            empty_message = (
+                "  No matching notes."
+                if note_filter
+                else "  No items. Press a for a task or A for a note."
+            )
+            lines.append(Text(empty_message, style="dim"))
 
         visible_rows = _task_visible_rows(mode, status_msg, console.height or 24)
         visible_lines = lines[tasks_scroll:tasks_scroll + visible_rows]
@@ -591,7 +616,16 @@ def _render_main(
         for _ in range(visible_rows - len(visible_lines)):
             console.print(end="\033[K\n")
 
-    if mode == "new_note":
+    if mode == "note_filter":
+        console.print(end="\033[K\n")
+        input_line = Text("  Filter notes > ", style="yellow bold")
+        input_line.append(Text(edit_text[:edit_cursor], style="yellow bold"))
+        char_under = edit_text[edit_cursor] if edit_cursor < len(edit_text) else " "
+        input_line.append(Text(char_under, style="reverse yellow bold"))
+        if edit_cursor < len(edit_text):
+            input_line.append(Text(edit_text[edit_cursor + 1:], style="yellow bold"))
+        console.print(input_line, end="\033[K\n", overflow="crop", no_wrap=True)
+    elif mode == "new_note":
         console.print(end="\033[K\n")
         console.print(Text("  Note name", style="bold yellow"), end="\033[K\n")
         input_line = Text("  > ", style="yellow bold")
@@ -1205,6 +1239,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
     lists_scroll = 0
     tasks_scroll = 0
     fuzzy_scroll = 0
+    note_filter = ""
 
     current_list = list_name
     if not lock_list and active_lists and current_list not in active_lists:
@@ -1226,7 +1261,9 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
             hover = 0
             continue
 
-        tasks = db.get_active_tasks(current_list) if view == "tasks" else []
+        all_tasks = db.get_active_tasks(current_list) if view == "tasks" else []
+        displayed_filter = edit_text if mode == "note_filter" else note_filter
+        tasks = _filter_notes(all_tasks, displayed_filter)
         
         # Determine and clamp hovers
         if mode == "fuzzy_list":
@@ -1318,6 +1355,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
             lists_scroll,
             tasks_scroll,
             fuzzy_scroll,
+            displayed_filter,
         )
         status_msg = ""
 
@@ -1360,12 +1398,16 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                 edit_cursor = min(len(edit_text), edit_cursor + 1)
             elif key == term.KEY_ENTER:
                 if matched:
-                    current_list = matched[hover]
+                    selected_list = matched[hover]
+                    if selected_list != current_list:
+                        note_filter = ""
+                    current_list = selected_list
                 else:
                     cleaned_name = edit_text.strip()
                     if cleaned_name:
                         db.create_list(cleaned_name)
                         current_list = cleaned_name
+                        note_filter = ""
                 mode = "normal"
                 view = "tasks"
                 edit_text = ""
@@ -1377,6 +1419,70 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
             elif len(key) == 1 and ord(key) >= 32:
                 edit_text = edit_text[:edit_cursor] + key + edit_text[edit_cursor:]
                 edit_cursor += 1
+
+        elif mode == "note_filter":
+            if key == term.KEY_ESC:
+                mode = "normal"
+                edit_text = ""
+                edit_cursor = 0
+                hover = 0
+                tasks_scroll = 0
+            elif key == term.KEY_ENTER:
+                note_filter = edit_text.strip()
+                mode = "normal"
+                edit_text = ""
+                edit_cursor = 0
+                hover = 0
+                tasks_scroll = 0
+            elif key == term.KEY_ARROW_UP:
+                hover = max(0, hover - 1)
+            elif key == term.KEY_ARROW_DOWN:
+                hover = min(max(0, len(tasks) - 1), hover + 1)
+            elif key == term.KEY_PAGE_UP:
+                hover = _task_page_hover(
+                    tasks,
+                    hover,
+                    min(len(_normal_hint_text(lock_list)), console.width or 80),
+                    _task_visible_rows(mode, status_msg, console.height or 24),
+                    -1,
+                )
+            elif key == term.KEY_PAGE_DOWN:
+                hover = _task_page_hover(
+                    tasks,
+                    hover,
+                    min(len(_normal_hint_text(lock_list)), console.width or 80),
+                    _task_visible_rows(mode, status_msg, console.height or 24),
+                    1,
+                )
+            elif key in (term.KEY_CMD_BACKSPACE, term.KEY_CTRL_BACKSPACE):
+                edit_text = ""
+                edit_cursor = 0
+                hover = 0
+                tasks_scroll = 0
+            elif key == term.KEY_BACKSPACE:
+                if edit_cursor > 0:
+                    edit_text = edit_text[:edit_cursor - 1] + edit_text[edit_cursor:]
+                    edit_cursor -= 1
+                    hover = 0
+                    tasks_scroll = 0
+            elif key == term.KEY_DELETE:
+                if edit_cursor < len(edit_text):
+                    edit_text = edit_text[:edit_cursor] + edit_text[edit_cursor + 1:]
+                    hover = 0
+                    tasks_scroll = 0
+            elif key == term.KEY_ARROW_LEFT:
+                edit_cursor = max(0, edit_cursor - 1)
+            elif key == term.KEY_ARROW_RIGHT:
+                edit_cursor = min(len(edit_text), edit_cursor + 1)
+            elif key == term.KEY_HOME:
+                edit_cursor = 0
+            elif key == term.KEY_END:
+                edit_cursor = len(edit_text)
+            elif len(key) == 1 and ord(key) >= 32:
+                edit_text = edit_text[:edit_cursor] + key + edit_text[edit_cursor:]
+                edit_cursor += 1
+                hover = 0
+                tasks_scroll = 0
 
         elif mode == "normal":
             if view == "lists_menu":
@@ -1408,7 +1514,10 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                 elif key == term.KEY_ENTER:
                     lists = db.get_all_lists()
                     if lists:
-                        current_list = lists[hover]
+                        selected_list = lists[hover]
+                        if selected_list != current_list:
+                            note_filter = ""
+                        current_list = selected_list
                     view = "tasks"
                     hover = 0
                     tasks_scroll = 0
@@ -1485,6 +1594,12 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                     hover = 0
                     fuzzy_scroll = 0
                     continue
+                elif key == "f":
+                    mode = "note_filter"
+                    edit_text = note_filter
+                    edit_cursor = len(edit_text)
+                    hover = 0
+                    tasks_scroll = 0
                 elif key in (term.KEY_ARROW_UP, "k"):
                     if hover > 0:
                         hover -= 1
@@ -1534,6 +1649,8 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                     if current_list in lists:
                         curr_idx = lists.index(current_list)
                         next_idx = max(0, curr_idx - 1)
+                        if next_idx != curr_idx:
+                            note_filter = ""
                         current_list = lists[next_idx]
                         hover = 0
                         tasks_scroll = 0
@@ -1542,6 +1659,8 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                     if current_list in lists:
                         curr_idx = lists.index(current_list)
                         next_idx = min(len(lists) - 1, curr_idx + 1)
+                        if next_idx != curr_idx:
+                            note_filter = ""
                         current_list = lists[next_idx]
                         hover = 0
                         tasks_scroll = 0
@@ -1555,15 +1674,15 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         hover += 1
                 elif key == term.KEY_ALT_ARROW_UP:
                     limit = db.get_max_tasks(current_list)
-                    if tasks and hover > 0 and len(tasks) < limit:
+                    if tasks and hover > 0 and len(all_tasks) < limit:
                         db.duplicate_task(tasks[hover]["id"], -1)
                         tasks = db.get_active_tasks(current_list)
                         hover -= 1
-                    elif tasks and len(tasks) >= limit:
+                    elif tasks and len(all_tasks) >= limit:
                         status_msg = f"max tasks reached ({limit})"
                 elif key == term.KEY_ALT_ARROW_DOWN:
                     limit = db.get_max_tasks(current_list)
-                    if tasks and len(tasks) < limit:
+                    if tasks and len(all_tasks) < limit:
                         db.duplicate_task(tasks[hover]["id"], 1)
                         tasks = db.get_active_tasks(current_list)
                         hover += 1
@@ -1587,7 +1706,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         edit_cursor = len(edit_text)
                 elif key == "a":
                     limit = db.get_max_tasks(current_list)
-                    if len(tasks) < limit:
+                    if len(all_tasks) < limit:
                         new_task = db.add_task("", current_list)
                         if new_task:
                             tasks = db.get_active_tasks(current_list)
@@ -1600,7 +1719,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         status_msg = f"max tasks reached ({limit})"
                 elif key == "A":
                     limit = db.get_max_tasks(current_list)
-                    if len(tasks) < limit:
+                    if len(all_tasks) < limit:
                         edit_text = _default_note_title()
                         edit_cursor = len(edit_text)
                         mode = "new_note"
@@ -1625,10 +1744,9 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         db.toggle_starred(tasks[hover]["id"])
                 elif key == "y":
                     # Yank copy
-                    active_tasks = db.get_active_tasks(current_list)
-                    if active_tasks:
+                    if tasks:
                         lines = []
-                        for t in active_tasks:
+                        for t in tasks:
                             marker = "★" if t.get("starred", 0) == 1 else "○"
                             lines.append(f"{marker} {t['text']}")
                         content = "\n".join(lines)
@@ -1660,6 +1778,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                     lists = db.get_all_lists()
                     if current_list == confirm_list_name:
                         current_list = lists[0] if lists else "main"
+                        note_filter = ""
                     hover = 0
                     view = "lists_menu"
                 elif confirm_action == "archive_list":
@@ -1667,6 +1786,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                     lists = db.get_all_lists()
                     if current_list == confirm_list_name:
                         current_list = lists[0] if lists else "main"
+                        note_filter = ""
                     hover = min(hover, max(0, len(lists) - 1))
                     view = "lists_menu"
                 mode = "normal"
@@ -1775,6 +1895,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                 if cleaned_name:
                     db.create_list(cleaned_name)
                     current_list = cleaned_name
+                    note_filter = ""
                     hover = 0
                     view = "tasks"
                     tasks_scroll = 0

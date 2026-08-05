@@ -160,6 +160,88 @@ class NoteTuiTests(unittest.TestCase):
         self.assertEqual(ends, [2, 4])
         self.assertEqual(total, 4)
 
+    def test_note_filter_matches_note_titles_only(self) -> None:
+        tasks = [
+            {"text": "Alpha task", "is_note": False},
+            {"text": "Alpha Journal", "is_note": True},
+            {"text": "Beta Journal", "is_note": True},
+        ]
+
+        self.assertEqual(tui._filter_notes(tasks, "alpha"), [tasks[1]])
+        self.assertEqual(tui._filter_notes(tasks, "  JOURNAL  "), tasks[1:])
+        self.assertEqual(tui._filter_notes(tasks, ""), tasks)
+
+    def test_f_filters_notes_in_current_list(self) -> None:
+        db.create_list("main")
+        db.add_task("Beta task", "main")
+        db.add_note("Alpha Journal", "main")
+        db.add_note("Beta Journal", "main")
+        frames: list[tuple[str, list[str], str]] = []
+        keys = iter(["f", "B", "E", "T", "A", terminal.KEY_ENTER, "q"])
+
+        with (
+            patch.object(terminal, "read_key", side_effect=lambda: next(keys)),
+            patch.object(
+                tui,
+                "_render_main",
+                side_effect=lambda *args: frames.append(
+                    (args[2], [task["text"] for task in args[0]], args[-1])
+                ),
+            ),
+        ):
+            tui._run_main_loop("main", lock_list=True)
+
+        self.assertEqual(frames[-1], ("normal", ["Beta Journal"], "BETA"))
+
+    def test_empty_note_filter_clears_active_filter(self) -> None:
+        db.create_list("main")
+        db.add_task("Task", "main")
+        db.add_note("Alpha Journal", "main")
+        frames: list[tuple[list[str], str]] = []
+        keys = iter([
+            "f", "a", "l", "p", "h", "a", terminal.KEY_ENTER,
+            "f", terminal.KEY_CMD_BACKSPACE, terminal.KEY_ENTER, "q",
+        ])
+
+        with (
+            patch.object(terminal, "read_key", side_effect=lambda: next(keys)),
+            patch.object(
+                tui,
+                "_render_main",
+                side_effect=lambda *args: frames.append(
+                    ([task["text"] for task in args[0]], args[-1])
+                ),
+            ),
+        ):
+            tui._run_main_loop("main", lock_list=True)
+
+        self.assertEqual(frames[-1], (["Task", "Alpha Journal"], ""))
+
+    def test_escape_cancels_note_filter_edits(self) -> None:
+        db.create_list("main")
+        db.add_note("Alpha Journal", "main")
+        db.add_note("Beta Journal", "main")
+        frames: list[tuple[list[str], str]] = []
+        keys = iter([
+            "f", "a", "l", "p", "h", "a", terminal.KEY_ENTER,
+            "f", terminal.KEY_CMD_BACKSPACE, "b", "e", "t", "a",
+            terminal.KEY_ESC, "q",
+        ])
+
+        with (
+            patch.object(terminal, "read_key", side_effect=lambda: next(keys)),
+            patch.object(
+                tui,
+                "_render_main",
+                side_effect=lambda *args: frames.append(
+                    ([task["text"] for task in args[0]], args[-1])
+                ),
+            ),
+        ):
+            tui._run_main_loop("main", lock_list=True)
+
+        self.assertEqual(frames[-1], (["Alpha Journal"], "alpha"))
+
     def test_main_loop_scrolls_large_task_lists(self) -> None:
         db.create_list("main")
         db.set_max_tasks(40, "main")
@@ -176,7 +258,7 @@ class NoteTuiTests(unittest.TestCase):
             patch.object(
                 tui,
                 "_render_main",
-                side_effect=lambda *args: scroll_positions.append(args[-2]),
+                side_effect=lambda *args: scroll_positions.append(args[-3]),
             ),
         ):
             tui._run_main_loop("main", lock_list=True)
@@ -250,6 +332,32 @@ class NoteTuiTests(unittest.TestCase):
         self.assertTrue(frame.startswith("\033[Htd • main"))
         self.assertIn("PgUp/PgDn:page", frame)
         self.assertFalse(frame.endswith("\n\033[J"))
+        self.assertEqual(output.write_count, 1, [repr(value) for value in output.writes])
+
+        output.seek(0)
+        output.truncate(0)
+        output.write_count = 0
+        output.writes.clear()
+
+        with (
+            patch.object(tui, "console", test_console),
+            patch.object(terminal, "reset_cursor"),
+            patch.object(tui.sys.stdout, "write"),
+            patch.object(tui.sys.stdout, "flush"),
+        ):
+            tui._render_main(
+                tasks[:1],
+                hover=0,
+                mode="note_filter",
+                edit_text="Task" * 40,
+                edit_cursor=160,
+                list_name="main",
+                note_filter="Task" * 40,
+            )
+
+        filter_frame = output.getvalue()
+        self.assertEqual(filter_frame.count("\n"), 9)
+        self.assertTrue(filter_frame.startswith("\033[Htd • main"))
         self.assertEqual(output.write_count, 1, [repr(value) for value in output.writes])
 
     def test_alt_arrows_move_editor_lines(self) -> None:

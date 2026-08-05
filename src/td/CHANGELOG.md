@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.2.4] - 2026-08-05
+- Add live, case-insensitive note-title filtering with `f` in the current list.
+
 ## [0.2.3] - 2026-08-05
 - Scroll large task lists inside a fixed header and footer viewport.
 - Buffer complete TUI frames to prevent flicker and partial header rendering.

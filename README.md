@@ -112,6 +112,7 @@ td notes delete 12 --json
 | `s` | Star task (pin to top, bold yellow) |
 | `c` | Archive all completed tasks |
 | `y` | Copy task list to clipboard |
+| `f` | Filter notes by title in current list; submit empty query to clear |
 | `↑` / `k` &nbsp; `↓` / `j` | Navigate tasks |
 | `PageUp` / `PageDown` | Move one viewport |
 | `Ctrl+↑` / `Ctrl+↓` | Reorder task position |
