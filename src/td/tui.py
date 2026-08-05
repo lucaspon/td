@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import sys
+import textwrap
 from datetime import datetime, timezone
+from functools import wraps
 
 from rich.console import Console
 from rich.text import Text
@@ -12,6 +14,22 @@ from . import terminal as term
 console = Console()
 
 _VERSION: str | None = None
+
+
+def _buffered_frame(render):
+    """Render a complete terminal frame, then emit it with one write."""
+    @wraps(render)
+    def buffered(*args, **kwargs):
+        with console.capture() as capture:
+            render(*args, **kwargs)
+        content = capture.get()
+        if content.endswith("\n"):
+            content = content[:-1]
+        frame = "\033[H" + content + "\033[J"
+        console.file.write(frame)
+        console.file.flush()
+
+    return buffered
 
 
 def _app_version() -> str:
@@ -145,9 +163,8 @@ def _normal_hint_text(lock_list: bool = False) -> str:
     return "  " + " │ ".join(parts)
 
 
+@_buffered_frame
 def _render_help_screen(lock_list: bool = False) -> None:
-    term.reset_cursor()
-
     header = Text("help • ", style="bold")
     header.append(Text("keybindings & commands", style="dim"))
     console.print(header)
@@ -175,6 +192,7 @@ def _render_help_screen(lock_list: bool = False) -> None:
     console.print("  Ctrl+S      Save without closing")
     console.print("  Enter       Insert a new line")
     console.print("              Continue and indent Markdown bullets automatically")
+    console.print("  PageUp/Down Move one viewport")
     console.print("  Alt+↑/↓     Move current line")
     clear_line_key = "Cmd+Backspace" if sys.platform == "darwin" else "Ctrl+Backspace"
     console.print(f"  {clear_line_key:<18}Clear current line")
@@ -184,7 +202,8 @@ def _render_help_screen(lock_list: bool = False) -> None:
 
     # Group 2: Lists & Navigation
     console.print(Text("Lists & Navigation:", style="bold yellow"))
-    console.print("  ↑/k  ↓/j    Navigate tasks / lists")
+    console.print("  ↑/k  ↓/j    Navigate and scroll tasks / lists")
+    console.print("  PageUp/Down  Move one viewport at a time")
     if not lock_list:
         console.print("  l / Tab     Open vertical Lists Menu")
         console.print("  Ctrl+P      Open 'go to list' fuzzy search dialog")
@@ -214,10 +233,82 @@ def _render_help_screen(lock_list: bool = False) -> None:
 
     console.print(Text("─" * divider_width, style="dim"))
     console.print(_footer_with_version("  Press any key to return...", divider_width))
-    sys.stdout.write("\033[J")
-    sys.stdout.flush()
 
 
+def _task_visible_rows(mode: str, status_msg: str, term_height: int) -> int:
+    """Return task rows that fit above the footer and transient messages."""
+    reserved_rows = 2 if mode in ("new_note", "confirm") or status_msg else 0
+    return max(1, term_height - 6 - reserved_rows)
+
+
+def _fuzzy_visible_rows(term_height: int) -> int:
+    """Return rows available beneath the fuzzy-list query."""
+    return max(1, term_height - 9)
+
+
+def _page_index(index: int, count: int, page_size: int, direction: int) -> int:
+    """Move an index by one page while keeping it inside the collection."""
+    if count <= 0:
+        return 0
+    step = max(1, page_size)
+    return max(0, min(count - 1, index + direction * step))
+
+
+def _task_visual_row_ranges(
+    tasks: list[dict],
+    hover: int,
+    divider_width: int,
+    mode: str = "normal",
+) -> tuple[list[int], list[int], int]:
+    """Return each task's visual row range and the total rendered rows."""
+    wrap_width = max(20, divider_width - 4)
+    starts: list[int] = []
+    ends: list[int] = []
+    total_rows = 0
+    previous_starred = False
+
+    for index, task in enumerate(tasks):
+        if index > 0 and previous_starred:
+            total_rows += 1
+
+        starts.append(total_rows)
+        if mode == "edit" and index == hover:
+            row_count = 1
+        else:
+            row_count = max(1, len(textwrap.wrap(task.get("text", ""), width=wrap_width)))
+        total_rows += row_count
+        ends.append(total_rows)
+        previous_starred = task.get("starred", 0) == 1
+
+    return starts, ends, total_rows
+
+
+def _task_page_hover(
+    tasks: list[dict],
+    hover: int,
+    divider_width: int,
+    visible_rows: int,
+    direction: int,
+) -> int:
+    """Move task selection by roughly one viewport of rendered rows."""
+    if not tasks:
+        return 0
+    starts, _, _ = _task_visual_row_ranges(tasks, hover, divider_width)
+    target_row = starts[hover] + direction * max(1, visible_rows)
+
+    if direction > 0:
+        for index in range(hover + 1, len(tasks)):
+            if starts[index] >= target_row:
+                return index
+        return len(tasks) - 1
+
+    for index in range(hover - 1, -1, -1):
+        if starts[index] <= target_row:
+            return index
+    return 0
+
+
+@_buffered_frame
 def _render_main(
     tasks: list[dict],
     hover: int,
@@ -230,9 +321,9 @@ def _render_main(
     view: str = "tasks",
     status_msg: str = "",
     lists_scroll: int = 0,
+    tasks_scroll: int = 0,
+    fuzzy_scroll: int = 0,
 ) -> None:
-    term.reset_cursor()
-
     divider_width = min(len(_normal_hint_text(lock_list)), console.width or 80)
 
     if view == "lists_menu":
@@ -265,16 +356,16 @@ def _render_main(
     elif mode == "confirm":
         hint_parts = ["Enter:confirm", "Esc:cancel"]
     elif mode == "fuzzy_list":
-        hint_parts = ["Esc:cancel", "Enter:go to list", "↑/↓:navigate matches"]
+        hint_parts = ["Esc:cancel", "Enter:go to list", "↑/↓:navigate", "PgUp/PgDn:page"]
     else:
         # mode == "normal"
         if view == "lists_menu":
             hint_parts = [
-                "a:add", "e:edit", "A:archive", ",:archived", "d:delete",
+                "PgUp/PgDn:page", "a:add", "e:edit", "A:archive", ",:archived", "d:delete",
                 "Enter:open", "q:quit",
             ]
         else:
-            hint_parts = ["a:task", "A:note", "e/Enter:edit", "E:rename note", "d:delete", "Space:done", "s:star", "c:clear"]
+            hint_parts = ["PgUp/PgDn:page", "a:task", "A:note", "e/Enter:edit", "E:rename note", "d:delete", "Space:done", "s:star", "c:clear"]
             if not lock_list:
                 hint_parts.append("l:view lists")
             hint_parts.append("q:quit")
@@ -320,20 +411,28 @@ def _render_main(
                     
         if not matched:
             console.print(Text("    No matching lists. Press Enter to create new list.", style="dim"), end="\033[K\n")
+            visible_count = 1
         else:
-            for idx, match_item in enumerate(matched):
+            visible_rows = _fuzzy_visible_rows(console.height or 24)
+            visible_matches = matched[fuzzy_scroll:fuzzy_scroll + visible_rows]
+            for idx, match_item in enumerate(visible_matches, start=fuzzy_scroll):
                 is_selected = idx == hover
                 prefix = "  ▸ " if is_selected else "    "
                 if is_selected:
                     console.print(Text(f"{prefix}{match_item}", style="bold cyan"), end="\033[K\n")
                 else:
                     console.print(Text(f"{prefix}{match_item}", style="dim"), end="\033[K\n")
+            visible_count = len(visible_matches)
+        visible_rows = _fuzzy_visible_rows(console.height or 24)
+        for _ in range(visible_rows - visible_count):
+            console.print(end="\033[K\n")
     elif view == "lists_menu":
         lists = db.get_all_lists()
         term_height = console.height or 24
-        max_visible = max(3, term_height - 6)
+        max_visible = _task_visible_rows(mode, status_msg, term_height)
+        list_slots = max(0, max_visible - (1 if mode == "new_list" else 0))
         start = lists_scroll
-        end = min(start + max_visible, len(lists))
+        end = min(start + list_slots, len(lists))
 
         lines = []
         for i in range(start, end):
@@ -379,8 +478,11 @@ def _render_main(
         if not lists and mode != "new_list":
             lines.append(Text("  No lists. Press a to add one.", style="dim"))
 
-        for line in lines:
+        visible_lines = lines[:max_visible]
+        for line in visible_lines:
             console.print(line, end="\033[K\n")
+        for _ in range(max_visible - len(visible_lines)):
+            console.print(end="\033[K\n")
     else:
         lines = []
         prev_starred = False
@@ -482,8 +584,12 @@ def _render_main(
         if not tasks:
             lines.append(Text("  No items. Press a for a task or A for a note.", style="dim"))
 
-        for line in lines:
+        visible_rows = _task_visible_rows(mode, status_msg, console.height or 24)
+        visible_lines = lines[tasks_scroll:tasks_scroll + visible_rows]
+        for line in visible_lines:
             console.print(line, end="\033[K\n")
+        for _ in range(visible_rows - len(visible_lines)):
+            console.print(end="\033[K\n")
 
     if mode == "new_note":
         console.print(end="\033[K\n")
@@ -504,9 +610,12 @@ def _render_main(
 
     console.print(end="\033[K\n")
     console.print(Text("─" * divider_width, style="dim"), end="\033[K\n")
-    console.print(Text(hint_text, style="dim"), end="\033[K\n")
-    sys.stdout.write("\033[J")
-    sys.stdout.flush()
+    console.print(
+        Text(hint_text, style="dim"),
+        end="\033[K\n",
+        overflow="crop",
+        no_wrap=True,
+    )
 
 
 def _fmt_timestamp(iso: str | None) -> str:
@@ -645,6 +754,46 @@ def _note_editor_visual_rows(
     return visual_rows, cursor_visual_row
 
 
+def _page_note_cursor(
+    lines: list[str],
+    row: int,
+    column: int,
+    content_width: int,
+    visible_rows: int,
+    direction: int,
+) -> tuple[int, int]:
+    """Move the editor cursor by one viewport of wrapped visual rows."""
+    visual_rows, cursor_visual_row = _note_editor_visual_rows(
+        lines, row, column, content_width
+    )
+    if not visual_rows:
+        return row, column
+
+    target_visual_row = max(
+        0,
+        min(
+            len(visual_rows) - 1,
+            cursor_visual_row + direction * max(1, visible_rows),
+        ),
+    )
+    target_row, target_segment, _ = visual_rows[target_visual_row]
+
+    if target_row != row:
+        return target_row, min(column, len(lines[target_row]))
+
+    active_segments = [
+        segment
+        for line_index, _, segment in visual_rows
+        if line_index == row
+    ]
+    current_segment = visual_rows[cursor_visual_row][1]
+    current_start = sum(len(segment.plain) for segment in active_segments[:current_segment])
+    target_start = sum(len(segment.plain) for segment in active_segments[:target_segment])
+    horizontal_offset = max(0, column - current_start)
+    return row, min(len(lines[row]), target_start + horizontal_offset)
+
+
+@_buffered_frame
 def _render_note_editor(
     title: str,
     lines: list[str],
@@ -653,7 +802,6 @@ def _render_note_editor(
     scroll: int,
     status_msg: str = "",
 ) -> None:
-    term.reset_cursor()
     width = max(30, console.width or 80)
     height = max(10, console.height or 24)
 
@@ -681,7 +829,7 @@ def _render_note_editor(
     for _ in range(visible_rows - len(visible)):
         console.print(end="\033[K\n")
 
-    footer = "  Esc:save & close │ Ctrl+S:save │ Enter:new line │ arrows:move"
+    footer = "  Esc:save & close │ Ctrl+S:save │ Enter:new line │ arrows:move │ PgUp/PgDn:page"
     if status_msg:
         footer = f"  {status_msg} │ " + footer.strip()
     clear_line_key = "Cmd+⌫" if sys.platform == "darwin" else "Ctrl+⌫"
@@ -692,8 +840,6 @@ def _render_note_editor(
     console.print(Text("─" * width, style="dim"), end="\033[K\n")
     console.print(Text(footer, style="dim"), end="\033[K\n", overflow="crop", no_wrap=True)
     console.print(Text(editor_hint, style="dim"), end="\033[K\n", overflow="crop", no_wrap=True)
-    sys.stdout.write("\033[J")
-    sys.stdout.flush()
 
 
 def _run_note_editor(note_id: int) -> None:
@@ -757,6 +903,26 @@ def _run_note_editor(note_id: int) -> None:
         elif key in (term.KEY_CMD_BACKSPACE, term.KEY_CTRL_BACKSPACE):
             lines[row] = ""
             column = 0
+        elif key == term.KEY_PAGE_UP:
+            row, column = _page_note_cursor(
+                lines, row, column, content_width, visible_rows, -1
+            )
+            visual_rows, cursor_visual_row = _note_editor_visual_rows(
+                lines, row, column, content_width
+            )
+            scroll = min(
+                cursor_visual_row, max(0, len(visual_rows) - visible_rows)
+            )
+        elif key == term.KEY_PAGE_DOWN:
+            row, column = _page_note_cursor(
+                lines, row, column, content_width, visible_rows, 1
+            )
+            visual_rows, cursor_visual_row = _note_editor_visual_rows(
+                lines, row, column, content_width
+            )
+            scroll = min(
+                cursor_visual_row, max(0, len(visual_rows) - visible_rows)
+            )
         elif key == term.KEY_ARROW_UP:
             if row > 0:
                 row -= 1
@@ -832,6 +998,7 @@ def _run_note_editor(note_id: int) -> None:
             column += 1
 
 
+@_buffered_frame
 def _render_archive(
     tasks: list[dict],
     hover: int,
@@ -841,8 +1008,6 @@ def _render_archive(
     confirm_msg: str = "",
     list_name: str = "main",
 ) -> None:
-    term.reset_cursor()
-
     header = Text(f"archive • {list_name} • ", style="bold")
     header.append(Text(f"{len(tasks)} items", style="dim"))
     console.print(header)
@@ -850,16 +1015,18 @@ def _render_archive(
     if mode == "confirm":
         hint_text = "  " + " │ ".join(["Enter:confirm", "Esc:cancel"])
     else:
-        hint_text = "  " + " │ ".join(["↑/k ↓/j:navigate", "d:delete", "r:restore", "c:clear", "q:return"])
+        hint_text = "  " + " │ ".join(["↑/k ↓/j:navigate", "PgUp/PgDn:page", "d:delete", "r:restore", "c:clear", "q:return"])
 
     divider_width = min(len(_normal_hint_text()), console.width or 80)
     console.print(Text("─" * divider_width, style="dim"))
     console.print()
 
+    max_lines = max(1, term_height - 6 - (2 if mode == "confirm" else 0))
+    rendered_lines = 0
     if not tasks:
         console.print(Text("  No archived items.", style="dim"))
+        rendered_lines = 1
     else:
-        max_lines = term_height - 6  # header(2) + blank + bottom blank + divider + hints
         start = scroll
         end = min(start + max_lines, len(tasks))
 
@@ -887,6 +1054,10 @@ def _render_archive(
                 line.append(Text(task["text"], style=name_style))
                 line.append(Text(f"  {ts_text}", style="strike dim"))
             console.print(line)
+            rendered_lines += 1
+
+    for _ in range(max_lines - rendered_lines):
+        console.print(end="\033[K\n")
 
     if mode == "confirm":
         console.print()
@@ -894,18 +1065,17 @@ def _render_archive(
 
     console.print()
     console.print(Text("─" * divider_width, style="dim"))
-    console.print(Text(hint_text, style="dim"))
-    sys.stdout.write("\033[J")
-    sys.stdout.flush()
+    console.print(Text(hint_text, style="dim"), overflow="crop", no_wrap=True)
 
 
+@_buffered_frame
 def _render_archived_lists(
     lists: list[dict],
     hover: int,
+    scroll: int = 0,
     mode: str = "normal",
     confirm_msg: str = "",
 ) -> None:
-    term.reset_cursor()
     width = min(console.width or 80, 100)
 
     header = Text("lists archive • ", style="bold")
@@ -914,11 +1084,13 @@ def _render_archived_lists(
     console.print(Text("─" * width, style="dim"), end="\033[K\n")
     console.print(end="\033[K\n")
 
+    visible_rows = max(1, (console.height or 24) - 6 - (2 if mode == "confirm" else 0))
+    rendered_rows = 0
     if not lists:
         console.print(Text("  No archived lists.", style="dim"), end="\033[K\n")
+        rendered_rows = 1
     else:
-        visible_rows = max(3, (console.height or 24) - 7)
-        start = max(0, hover - visible_rows + 1)
+        start = scroll
         end = min(len(lists), start + visible_rows)
         for index in range(start, end):
             archived_list = lists[index]
@@ -932,6 +1104,10 @@ def _render_archived_lists(
             archived_at = _fmt_timestamp(archived_list["archived_at"])
             line.append(Text(f"  archived {archived_at}", style="dim"))
             console.print(line, end="\033[K\n")
+            rendered_rows += 1
+
+    for _ in range(visible_rows - rendered_rows):
+        console.print(end="\033[K\n")
 
     if mode == "confirm":
         console.print(end="\033[K\n")
@@ -942,14 +1118,18 @@ def _render_archived_lists(
     if mode == "confirm":
         hint = "  Enter:confirm permanent delete │ Esc:cancel"
     else:
-        hint = "  Enter/r:restore │ d:delete permanently │ ↑/↓:navigate │ q:return"
-    console.print(Text(hint, style="dim"), end="\033[K\n")
-    sys.stdout.write("\033[J")
-    sys.stdout.flush()
+        hint = "  Enter/r:restore │ d:delete permanently │ ↑/↓:navigate │ PgUp/PgDn:page │ q:return"
+    console.print(
+        Text(hint, style="dim"),
+        end="\033[K\n",
+        overflow="crop",
+        no_wrap=True,
+    )
 
 
 def _run_archived_lists_loop() -> None:
     hover = 0
+    scroll = 0
     mode = "normal"
     confirm_name = ""
 
@@ -957,14 +1137,23 @@ def _run_archived_lists_loop() -> None:
         lists = db.get_archived_lists()
         if lists:
             hover = min(hover, len(lists) - 1)
+            visible_rows = max(
+                1, (console.height or 24) - 6 - (2 if mode == "confirm" else 0)
+            )
+            if hover < scroll:
+                scroll = hover
+            elif hover >= scroll + visible_rows:
+                scroll = hover - visible_rows + 1
+            scroll = max(0, min(scroll, max(0, len(lists) - visible_rows)))
         else:
             hover = 0
+            scroll = 0
         confirm_msg = (
             f'Delete archived list "{confirm_name}" and all its items permanently?'
             if mode == "confirm"
             else ""
         )
-        _render_archived_lists(lists, hover, mode, confirm_msg)
+        _render_archived_lists(lists, hover, scroll, mode, confirm_msg)
         key = term.read_key()
 
         if mode == "confirm":
@@ -981,6 +1170,16 @@ def _run_archived_lists_loop() -> None:
         elif key in (term.KEY_ARROW_DOWN, "j"):
             if hover < len(lists) - 1:
                 hover += 1
+        elif key == term.KEY_PAGE_UP:
+            hover = _page_index(
+                hover, len(lists), max(1, (console.height or 24) - 6), -1
+            )
+            scroll = hover
+        elif key == term.KEY_PAGE_DOWN:
+            hover = _page_index(
+                hover, len(lists), max(1, (console.height or 24) - 6), 1
+            )
+            scroll = hover
         elif key in (term.KEY_ENTER, "r"):
             if lists:
                 db.restore_list(lists[hover]["name"])
@@ -1004,6 +1203,8 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
     confirm_list_name = ""
     status_msg = ""
     lists_scroll = 0
+    tasks_scroll = 0
+    fuzzy_scroll = 0
 
     current_list = list_name
     if not lock_list and active_lists and current_list not in active_lists:
@@ -1051,13 +1252,23 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                 hover = len(matched) - 1
             if not matched:
                 hover = 0
+                fuzzy_scroll = 0
+            else:
+                fuzzy_rows = _fuzzy_visible_rows(console.height or 24)
+                if hover < fuzzy_scroll:
+                    fuzzy_scroll = hover
+                elif hover >= fuzzy_scroll + fuzzy_rows:
+                    fuzzy_scroll = hover - fuzzy_rows + 1
+                fuzzy_scroll = max(
+                    0, min(fuzzy_scroll, max(0, len(matched) - fuzzy_rows))
+                )
         elif view == "lists_menu":
             lists = db.get_all_lists()
             if lists and hover >= len(lists):
                 hover = len(lists) - 1
             if not lists:
                 hover = 0
-            max_vis = max(3, (console.height or 24) - 6)
+            max_vis = _task_visible_rows(mode, status_msg, console.height or 24)
             if hover < lists_scroll:
                 lists_scroll = hover
             elif hover >= lists_scroll + max_vis:
@@ -1067,6 +1278,18 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                 hover = len(tasks) - 1
             if not tasks:
                 hover = 0
+                tasks_scroll = 0
+            else:
+                divider_width = min(len(_normal_hint_text(lock_list)), console.width or 80)
+                starts, ends, total_rows = _task_visual_row_ranges(
+                    tasks, hover, divider_width, mode
+                )
+                visible_rows = _task_visible_rows(mode, status_msg, console.height or 24)
+                if starts[hover] < tasks_scroll:
+                    tasks_scroll = starts[hover]
+                if ends[hover] > tasks_scroll + visible_rows:
+                    tasks_scroll = ends[hover] - visible_rows
+                tasks_scroll = max(0, min(tasks_scroll, max(0, total_rows - visible_rows)))
 
         # Construct confirmation message
         if mode == "confirm" and confirm_action == "archive":
@@ -1081,7 +1304,21 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
         else:
             confirm_msg = ""
 
-        _render_main(tasks, hover, mode, edit_text, edit_cursor, confirm_msg, current_list, lock_list, view, status_msg, lists_scroll)
+        _render_main(
+            tasks,
+            hover,
+            mode,
+            edit_text,
+            edit_cursor,
+            confirm_msg,
+            current_list,
+            lock_list,
+            view,
+            status_msg,
+            lists_scroll,
+            tasks_scroll,
+            fuzzy_scroll,
+        )
         status_msg = ""
 
         key = term.read_key()
@@ -1093,12 +1330,23 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                 edit_text = ""
                 edit_cursor = 0
                 hover = 0
+                fuzzy_scroll = 0
             elif key == term.KEY_ARROW_UP:
                 if hover > 0:
                     hover -= 1
             elif key == term.KEY_ARROW_DOWN:
                 if matched and hover < len(matched) - 1:
                     hover += 1
+            elif key == term.KEY_PAGE_UP:
+                hover = _page_index(
+                    hover, len(matched), _fuzzy_visible_rows(console.height or 24), -1
+                )
+                fuzzy_scroll = hover
+            elif key == term.KEY_PAGE_DOWN:
+                hover = _page_index(
+                    hover, len(matched), _fuzzy_visible_rows(console.height or 24), 1
+                )
+                fuzzy_scroll = hover
             elif key == term.KEY_BACKSPACE:
                 if edit_cursor > 0:
                     edit_text = edit_text[:edit_cursor - 1] + edit_text[edit_cursor:]
@@ -1123,6 +1371,8 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                 edit_text = ""
                 edit_cursor = 0
                 hover = 0
+                tasks_scroll = 0
+                fuzzy_scroll = 0
                 term.clear_screen()
             elif len(key) == 1 and ord(key) >= 32:
                 edit_text = edit_text[:edit_cursor] + key + edit_text[edit_cursor:]
@@ -1139,12 +1389,29 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                     lists = db.get_all_lists()
                     if hover < len(lists) - 1:
                         hover += 1
+                elif key == term.KEY_PAGE_UP:
+                    hover = _page_index(
+                        hover,
+                        len(db.get_all_lists()),
+                        max(1, (console.height or 24) - 6),
+                        -1,
+                    )
+                    lists_scroll = hover
+                elif key == term.KEY_PAGE_DOWN:
+                    hover = _page_index(
+                        hover,
+                        len(db.get_all_lists()),
+                        max(1, (console.height or 24) - 6),
+                        1,
+                    )
+                    lists_scroll = hover
                 elif key == term.KEY_ENTER:
                     lists = db.get_all_lists()
                     if lists:
                         current_list = lists[hover]
                     view = "tasks"
                     hover = 0
+                    tasks_scroll = 0
                     term.clear_screen()
                 elif key == "a":
                     mode = "new_list"
@@ -1216,6 +1483,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                     edit_text = ""
                     edit_cursor = 0
                     hover = 0
+                    fuzzy_scroll = 0
                     continue
                 elif key in (term.KEY_ARROW_UP, "k"):
                     if hover > 0:
@@ -1223,6 +1491,44 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                 elif key in (term.KEY_ARROW_DOWN, "j"):
                     if tasks and hover < len(tasks) - 1:
                         hover += 1
+                elif key == term.KEY_PAGE_UP:
+                    hover = _task_page_hover(
+                        tasks,
+                        hover,
+                        min(len(_normal_hint_text(lock_list)), console.width or 80),
+                        _task_visible_rows(mode, status_msg, console.height or 24),
+                        -1,
+                    )
+                    starts, _, total_rows = _task_visual_row_ranges(
+                        tasks,
+                        hover,
+                        min(len(_normal_hint_text(lock_list)), console.width or 80),
+                    )
+                    visible_rows = _task_visible_rows(
+                        mode, status_msg, console.height or 24
+                    )
+                    tasks_scroll = min(
+                        starts[hover], max(0, total_rows - visible_rows)
+                    ) if tasks else 0
+                elif key == term.KEY_PAGE_DOWN:
+                    hover = _task_page_hover(
+                        tasks,
+                        hover,
+                        min(len(_normal_hint_text(lock_list)), console.width or 80),
+                        _task_visible_rows(mode, status_msg, console.height or 24),
+                        1,
+                    )
+                    starts, _, total_rows = _task_visual_row_ranges(
+                        tasks,
+                        hover,
+                        min(len(_normal_hint_text(lock_list)), console.width or 80),
+                    )
+                    visible_rows = _task_visible_rows(
+                        mode, status_msg, console.height or 24
+                    )
+                    tasks_scroll = min(
+                        starts[hover], max(0, total_rows - visible_rows)
+                    ) if tasks else 0
                 elif key == term.KEY_ARROW_LEFT and not lock_list:
                     lists = db.get_all_lists()
                     if current_list in lists:
@@ -1230,6 +1536,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         next_idx = max(0, curr_idx - 1)
                         current_list = lists[next_idx]
                         hover = 0
+                        tasks_scroll = 0
                 elif key == term.KEY_ARROW_RIGHT and not lock_list:
                     lists = db.get_all_lists()
                     if current_list in lists:
@@ -1237,6 +1544,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                         next_idx = min(len(lists) - 1, curr_idx + 1)
                         current_list = lists[next_idx]
                         hover = 0
+                        tasks_scroll = 0
                 elif key in (term.KEY_SHIFT_ARROW_UP, term.KEY_CTRL_ARROW_UP):
                     if tasks and hover > 0:
                         db.move_task(tasks[hover]["id"], -1)
@@ -1469,6 +1777,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                     current_list = cleaned_name
                     hover = 0
                     view = "tasks"
+                    tasks_scroll = 0
                 mode = "normal"
                 edit_text = ""
                 edit_cursor = 0
@@ -1501,6 +1810,7 @@ def _run_archive_loop(list_name: str = "main", lock_list: bool = False) -> None:
     confirm_task_id: int | None = None
 
     while True:
+        term_height = console.height or 24
         tasks = db.get_archived_tasks(list_name)
         if not tasks:
             hover = 0
@@ -1509,7 +1819,7 @@ def _run_archive_loop(list_name: str = "main", lock_list: bool = False) -> None:
             if hover >= len(tasks):
                 hover = len(tasks) - 1
             # Auto-scroll to keep hover visible
-            max_lines = term_height - 6
+            max_lines = max(1, term_height - 6 - (2 if mode == "confirm" else 0))
             if hover < scroll:
                 scroll = hover
             elif hover >= scroll + max_lines:
@@ -1536,6 +1846,16 @@ def _run_archive_loop(list_name: str = "main", lock_list: bool = False) -> None:
             elif key in (term.KEY_ARROW_DOWN, "j"):
                 if tasks and hover < len(tasks) - 1:
                     hover += 1
+            elif key == term.KEY_PAGE_UP:
+                hover = _page_index(
+                    hover, len(tasks), max(1, term_height - 6), -1
+                )
+                scroll = hover
+            elif key == term.KEY_PAGE_DOWN:
+                hover = _page_index(
+                    hover, len(tasks), max(1, term_height - 6), 1
+                )
+                scroll = hover
             elif key == "d":
                 if tasks:
                     confirm_action = "delete"
@@ -1574,6 +1894,7 @@ def _run_archive_loop(list_name: str = "main", lock_list: bool = False) -> None:
                 confirm_task_id = None
 
 
+@_buffered_frame
 def _render_settings(
     list_name: str,
     hover: int,
@@ -1582,8 +1903,6 @@ def _render_settings(
     edit_cursor: int = 0,
     status_msg: str = "",
 ) -> None:
-    term.reset_cursor()
-
     max_tasks = db.get_max_tasks(list_name)
     max_starred = db.get_max_starred_tasks()
 
@@ -1597,7 +1916,7 @@ def _render_settings(
         else:
             hint_text = "  " + " │ ".join(["Esc:cancel", "Enter:confirm"])
     else:
-        hint_text = "  " + " │ ".join(["↑/k ↓/j:navigate", "e:edit", "Enter:select", "q:return"])
+        hint_text = "  " + " │ ".join(["↑/k ↓/j:navigate", "PgUp/PgDn:page", "e:edit", "Enter:select", "q:return"])
 
     divider_width = min(len(_normal_hint_text(False)), console.width or 80)
     console.print(Text("─" * divider_width, style="dim"), end="\033[K\n")
@@ -1722,9 +2041,12 @@ def _render_settings(
 
     console.print(end="\033[K\n")
     console.print(Text("─" * divider_width, style="dim"), end="\033[K\n")
-    console.print(_footer_with_version(hint_text, divider_width), end="\033[K\n")
-    sys.stdout.write("\033[J")
-    sys.stdout.flush()
+    console.print(
+        _footer_with_version(hint_text, divider_width),
+        end="\033[K\n",
+        overflow="crop",
+        no_wrap=True,
+    )
 
 
 def _run_settings_loop(list_name: str) -> None:
@@ -1749,6 +2071,14 @@ def _run_settings_loop(list_name: str) -> None:
             elif key in (term.KEY_ARROW_DOWN, "j"):
                 if hover < num_items - 1:
                     hover += 1
+            elif key == term.KEY_PAGE_UP:
+                hover = _page_index(
+                    hover, num_items, max(1, (console.height or 24) - 6), -1
+                )
+            elif key == term.KEY_PAGE_DOWN:
+                hover = _page_index(
+                    hover, num_items, max(1, (console.height or 24) - 6), 1
+                )
             elif key in (term.KEY_ENTER, "e"):
                 if hover == 0:
                     mode = "edit"

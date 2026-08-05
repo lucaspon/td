@@ -19,6 +19,8 @@ KEY_ARROW_LEFT = "\x1b[D"
 KEY_ARROW_RIGHT = "\x1b[C"
 KEY_HOME = "\x1b[H"
 KEY_END = "\x1b[F"
+KEY_PAGE_UP = "\x1b[5~"
+KEY_PAGE_DOWN = "\x1b[6~"
 KEY_SHIFT_ARROW_UP = "\x1b[1;2A"
 KEY_SHIFT_ARROW_DOWN = "\x1b[1;2B"
 KEY_SHIFT_TAB = "\x1b[Z"
@@ -52,6 +54,8 @@ if IS_WINDOWS:
         "M": KEY_ARROW_RIGHT,
         "G": KEY_HOME,
         "O": KEY_END,
+        "I": KEY_PAGE_UP,
+        "Q": KEY_PAGE_DOWN,
         "S": KEY_DELETE,
         "\x0f": KEY_SHIFT_TAB,
         "\x8d": KEY_CTRL_ARROW_UP,

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.3] - 2026-08-05
+- Scroll large task lists inside a fixed header and footer viewport.
+- Buffer complete TUI frames to prevent flicker and partial header rendering.
+- Prevent a trailing frame newline from scrolling the header off-screen.
+- Add PageUp/PageDown navigation across lists, archives, settings, and the note editor.
+
 ## [0.2.2] - 2026-08-05
 - Fix `td update` silently reporting "already up-to-date" on installs made from a local checkout.
 - Pull the source checkout with `git pull --ff-only` and force a rebuild before upgrading such installs.

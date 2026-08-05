@@ -148,6 +148,110 @@ class NoteTuiTests(unittest.TestCase):
         self.assertEqual(scroll_positions[0], 0)
         self.assertGreater(scroll_positions[-1], 0)
 
+    def test_task_visual_rows_include_wrapping_and_starred_separator(self) -> None:
+        tasks = [
+            {"text": "x" * 21, "starred": 1},
+            {"text": "next", "starred": 0},
+        ]
+
+        starts, ends, total = tui._task_visual_row_ranges(tasks, 0, 24)
+
+        self.assertEqual(starts, [0, 3])
+        self.assertEqual(ends, [2, 4])
+        self.assertEqual(total, 4)
+
+    def test_main_loop_scrolls_large_task_lists(self) -> None:
+        db.create_list("main")
+        db.set_max_tasks(40, "main")
+        for index in range(20):
+            db.add_task(f"Task {index}", "main")
+
+        scroll_positions: list[int] = []
+        keys = iter([terminal.KEY_ARROW_DOWN] * 19 + ["q"])
+        test_console = Console(file=io.StringIO(), width=80, height=10, force_terminal=False)
+
+        with (
+            patch.object(tui, "console", test_console),
+            patch.object(terminal, "read_key", side_effect=lambda: next(keys)),
+            patch.object(
+                tui,
+                "_render_main",
+                side_effect=lambda *args: scroll_positions.append(args[-2]),
+            ),
+        ):
+            tui._run_main_loop("main", lock_list=True)
+
+        self.assertEqual(scroll_positions[0], 0)
+        self.assertGreater(scroll_positions[-1], 0)
+
+    def test_page_down_moves_task_selection_by_one_viewport(self) -> None:
+        db.create_list("main")
+        db.set_max_tasks(40, "main")
+        for index in range(20):
+            db.add_task(f"Task {index}", "main")
+
+        hover_positions: list[int] = []
+        keys = iter([terminal.KEY_PAGE_DOWN, "q"])
+        test_console = Console(file=io.StringIO(), width=80, height=10, force_terminal=False)
+
+        with (
+            patch.object(tui, "console", test_console),
+            patch.object(terminal, "read_key", side_effect=lambda: next(keys)),
+            patch.object(
+                tui,
+                "_render_main",
+                side_effect=lambda *args: hover_positions.append(args[1]),
+            ),
+        ):
+            tui._run_main_loop("main", lock_list=True)
+
+        self.assertEqual(hover_positions, [0, 4])
+
+    def test_page_down_moves_within_a_wrapped_editor_line(self) -> None:
+        lines = ["word " * 40]
+
+        row, column = tui._page_note_cursor(lines, 0, 0, 10, 3, 1)
+
+        self.assertEqual(row, 0)
+        self.assertGreater(column, 0)
+
+    def test_main_header_and_footer_stay_at_fixed_rows(self) -> None:
+        class CountingOutput(io.StringIO):
+            def __init__(self) -> None:
+                super().__init__()
+                self.write_count = 0
+                self.writes: list[str] = []
+
+            def write(self, value: str) -> int:
+                if value:
+                    self.write_count += 1
+                    self.writes.append(value)
+                return super().write(value)
+
+        db.create_list("main")
+        tasks = [
+            {"text": f"Task {index}", "status": "active", "starred": 0}
+            for index in range(20)
+        ]
+        output = CountingOutput()
+        test_console = Console(file=output, width=80, height=10, force_terminal=False)
+        output.write_count = 0
+
+        with (
+            patch.object(tui, "console", test_console),
+            patch.object(terminal, "reset_cursor"),
+            patch.object(tui.sys.stdout, "write"),
+            patch.object(tui.sys.stdout, "flush"),
+        ):
+            tui._render_main(tasks, hover=7, list_name="main", tasks_scroll=4)
+
+        frame = output.getvalue()
+        self.assertEqual(frame.count("\n"), 9)
+        self.assertTrue(frame.startswith("\033[Htd • main"))
+        self.assertIn("PgUp/PgDn:page", frame)
+        self.assertFalse(frame.endswith("\n\033[J"))
+        self.assertEqual(output.write_count, 1, [repr(value) for value in output.writes])
+
     def test_alt_arrows_move_editor_lines(self) -> None:
         note = db.add_note("Movement")
         assert note is not None

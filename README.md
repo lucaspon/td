@@ -113,6 +113,7 @@ td notes delete 12 --json
 | `c` | Archive all completed tasks |
 | `y` | Copy task list to clipboard |
 | `↑` / `k` &nbsp; `↓` / `j` | Navigate tasks |
+| `PageUp` / `PageDown` | Move one viewport |
 | `Ctrl+↑` / `Ctrl+↓` | Reorder task position |
 | `Alt+↑` / `Alt+↓` | Duplicate task above / below |
 | `←` / `→` | Switch to previous / next list |
@@ -134,6 +135,7 @@ td notes delete 12 --json
 | `Cmd+Backspace` on macOS / `Ctrl+Backspace` elsewhere | Clear current line |
 | `Tab` / `Shift+Tab` | Indent or outdent current line |
 | Arrow keys / `Home` / `End` | Move cursor |
+| `PageUp` / `PageDown` | Move one wrapped viewport |
 | `Backspace` / `Delete` | Delete text or join lines |
 
 The active line shows raw Markdown. Other lines show a live preview. The editor
@@ -154,6 +156,7 @@ marker. Press `Enter` or `Backspace` on an empty continuation to leave list mode
 | `d` | Delete list (with all its tasks) |
 | `Shift+↑` / `Shift+↓` | Reorder list position |
 | `↑` / `k` &nbsp; `↓` / `j` | Navigate lists |
+| `PageUp` / `PageDown` | Move one viewport |
 | `q` / `Esc` | Quit |
 
 ### Archived Lists
@@ -163,6 +166,7 @@ marker. Press `Enter` or `Backspace` on an empty continuation to leave list mode
 | `Enter` / `r` | Restore highlighted list |
 | `d` | Permanently delete highlighted list and its items |
 | `↑` / `k` &nbsp; `↓` / `j` | Navigate archived lists |
+| `PageUp` / `PageDown` | Move one viewport |
 | `q` / `Esc` | Return to active lists |
 
 ### Archive
@@ -170,6 +174,7 @@ marker. Press `Enter` or `Backspace` on an empty continuation to leave list mode
 | Key | Action |
 |-----|--------|
 | `↑` / `k` &nbsp; `↓` / `j` | Navigate |
+| `PageUp` / `PageDown` | Move one viewport |
 | `r` | Restore task to active list |
 | `d` | Delete task permanently |
 | `c` | Clear all archived tasks |
@@ -182,6 +187,7 @@ marker. Press `Enter` or `Backspace` on an empty continuation to leave list mode
 | `e` / `Enter` | Edit selected setting |
 | `↑` / `↓` | Adjust numeric values (when editing) |
 | `↑` / `k` &nbsp; `↓` / `j` | Navigate settings |
+| `PageUp` / `PageDown` | Move one viewport |
 | `q` / `Esc` | Return |
 
 Settings you can change: max tasks per list (3–50), max starred tasks, whole-database
