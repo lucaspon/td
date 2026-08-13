@@ -171,6 +171,78 @@ class NoteTuiTests(unittest.TestCase):
         self.assertEqual(tui._filter_notes(tasks, "  JOURNAL  "), tasks[1:])
         self.assertEqual(tui._filter_notes(tasks, ""), tasks)
 
+    def test_sort_tasks_cycles_alphabetically_and_keeps_starred_first(self) -> None:
+        tasks = [
+            {"text": "bravo", "starred": 0},
+            {"text": "Alpha", "starred": 1},
+            {"text": "charlie", "starred": 0},
+            {"text": "delta", "starred": 1},
+        ]
+
+        self.assertEqual(
+            [task["text"] for task in tui._sort_tasks(tasks, "asc")],
+            ["Alpha", "delta", "bravo", "charlie"],
+        )
+        self.assertEqual(
+            [task["text"] for task in tui._sort_tasks(tasks, "desc")],
+            ["delta", "Alpha", "charlie", "bravo"],
+        )
+        self.assertIs(tui._sort_tasks(tasks, "none"), tasks)
+
+    def test_capital_s_cycles_task_sort_modes(self) -> None:
+        db.create_list("main")
+        db.add_task("charlie", "main")
+        db.add_task("Alpha", "main")
+        db.add_task("bravo", "main")
+        frames: list[list[str]] = []
+        keys = iter(["S", "S", "S", "q"])
+
+        with (
+            patch.object(terminal, "read_key", side_effect=lambda: next(keys)),
+            patch.object(
+                tui,
+                "_render_main",
+                side_effect=lambda *args: frames.append(
+                    [task["text"] for task in args[0]]
+                ),
+            ),
+        ):
+            tui._run_main_loop("main", lock_list=True)
+
+        self.assertEqual(
+            frames,
+            [
+                ["charlie", "Alpha", "bravo"],
+                ["Alpha", "bravo", "charlie"],
+                ["charlie", "bravo", "Alpha"],
+                ["charlie", "Alpha", "bravo"],
+            ],
+        )
+
+    def test_left_arrow_leaves_encrypted_list_prompt_for_previous_list(self) -> None:
+        db.create_list("journal")
+        db.enable_list_encryption("journal", "password")
+        db.LIST_ENCRYPTION_KEYS.clear()
+        list_frames: list[str] = []
+        keys = iter([
+            terminal.KEY_ARROW_RIGHT,
+            terminal.KEY_ARROW_LEFT,
+            "q",
+        ])
+
+        with (
+            patch.object(terminal, "read_key", side_effect=lambda: next(keys)),
+            patch.object(terminal, "clear_screen"),
+            patch.object(
+                tui,
+                "_render_main",
+                side_effect=lambda *args: list_frames.append(args[6]),
+            ),
+        ):
+            tui._run_main_loop("main")
+
+        self.assertEqual(list_frames, ["main", "main"])
+
     def test_f_filters_notes_in_current_list(self) -> None:
         db.create_list("main")
         db.add_task("Beta task", "main")

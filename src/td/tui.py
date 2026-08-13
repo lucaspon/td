@@ -85,7 +85,9 @@ def _copy_to_clipboard(text: str) -> bool:
     return False
 
 
-def prompt_password(prompt_text: str = "Enter password: ") -> str:
+def prompt_password(
+    prompt_text: str = "Enter password: ", allow_back: bool = False
+) -> str | None:
     """Prompt the user for a password, masking the characters with *."""
     term.clear_screen()
     console.print()
@@ -105,6 +107,9 @@ def prompt_password(prompt_text: str = "Enter password: ") -> str:
                 password = password[:-1]
                 sys.stdout.write("\b \b")
                 sys.stdout.flush()
+        elif allow_back and key == term.KEY_ARROW_LEFT:
+            term.clear_screen()
+            return None
         elif len(key) == 1 and ord(key) >= 32:
             password += key
             sys.stdout.write("*")
@@ -136,7 +141,7 @@ def _ensure_unlocked() -> bool:
     sys.exit(1)
 
 
-def _ensure_list_unlocked(list_name: str) -> bool:
+def _ensure_list_unlocked(list_name: str) -> bool | None:
     if not db.is_list_encryption_enabled(list_name) or db.is_list_unlocked(list_name):
         return True
 
@@ -145,7 +150,9 @@ def _ensure_list_unlocked(list_name: str) -> bool:
             prompt_text = f'List "{list_name}" is encrypted. Enter password: '
         else:
             prompt_text = f"Incorrect password (attempt {attempt}/3). Try again: "
-        password = prompt_password(prompt_text)
+        password = prompt_password(prompt_text, allow_back=True)
+        if password is None:
+            return None
         if db.set_list_encryption_key_from_password(list_name, password):
             return True
 
@@ -155,7 +162,7 @@ def _ensure_list_unlocked(list_name: str) -> bool:
 
 
 def _normal_hint_text(lock_list: bool = False) -> str:
-    parts = ["f:filter", "a:task", "A:note", "e/Enter:edit", "E:rename note", "d:delete", "Space:done", "s:star", "c:clear"]
+    parts = ["f:filter", "a:task", "A:note", "e/Enter:edit", "E:rename note", "d:delete", "Space:done", "s:star", "S:sort", "c:clear"]
     if not lock_list:
         parts.append("l:view lists")
     parts.append("q:quit")
@@ -183,6 +190,7 @@ def _render_help_screen(lock_list: bool = False) -> None:
     console.print("  d           Delete selected task")
     console.print("  Space       Toggle task done/active")
     console.print("  s           Toggle star/priority (pin to top)")
+    console.print("  S           Cycle sort: A-Z, Z-A, or original order")
     console.print("  c           Archive all completed tasks")
     console.print("  y           Copy active tasks in list to clipboard")
     console.print("  f           Filter notes by title in current list")
@@ -322,6 +330,20 @@ def _filter_notes(tasks: list[dict], query: str) -> list[dict]:
     ]
 
 
+def _sort_tasks(tasks: list[dict], sort_mode: str) -> list[dict]:
+    """Sort task titles while keeping starred tasks pinned above other tasks."""
+    if sort_mode == "none":
+        return tasks
+
+    starred = [task for task in tasks if task.get("starred", 0) == 1]
+    unstarred = [task for task in tasks if task.get("starred", 0) != 1]
+    reverse = sort_mode == "desc"
+    key = lambda task: task.get("text", "").casefold()
+    return sorted(starred, key=key, reverse=reverse) + sorted(
+        unstarred, key=key, reverse=reverse
+    )
+
+
 @_buffered_frame
 def _render_main(
     tasks: list[dict],
@@ -385,7 +407,7 @@ def _render_main(
                 "Enter:open", "q:quit",
             ]
         else:
-            hint_parts = ["PgUp/PgDn:page", "f:filter", "a:task", "A:note", "e/Enter:edit", "E:rename note", "d:delete", "Space:done", "s:star", "c:clear"]
+            hint_parts = ["PgUp/PgDn:page", "f:filter", "a:task", "A:note", "e/Enter:edit", "E:rename note", "d:delete", "Space:done", "s:star", "S:sort", "c:clear"]
             if not lock_list:
                 hint_parts.append("l:view lists")
             hint_parts.append("q:quit")
@@ -1240,6 +1262,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
     tasks_scroll = 0
     fuzzy_scroll = 0
     note_filter = ""
+    sort_mode = "none"
 
     current_list = list_name
     if not lock_list and active_lists and current_list not in active_lists:
@@ -1254,16 +1277,30 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
             mode = "normal"
             continue
 
-        if view == "tasks" and not _ensure_list_unlocked(current_list):
+        if view == "tasks":
+            unlock_status = _ensure_list_unlocked(current_list)
+        else:
+            unlock_status = True
+        if unlock_status is not True:
             if lock_list:
                 return
+            if unlock_status is None:
+                lists = db.get_all_lists()
+                if current_list in lists:
+                    current_index = lists.index(current_list)
+                    if current_index > 0:
+                        current_list = lists[current_index - 1]
+                        note_filter = ""
+                        hover = 0
+                        tasks_scroll = 0
+                        continue
             view = "lists_menu"
             hover = 0
             continue
 
         all_tasks = db.get_active_tasks(current_list) if view == "tasks" else []
         displayed_filter = edit_text if mode == "note_filter" else note_filter
-        tasks = _filter_notes(all_tasks, displayed_filter)
+        tasks = _sort_tasks(_filter_notes(all_tasks, displayed_filter), sort_mode)
         
         # Determine and clamp hovers
         if mode == "fuzzy_list":
@@ -1742,6 +1779,15 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
                 elif key == "s":
                     if tasks:
                         db.toggle_starred(tasks[hover]["id"])
+                elif key == "S":
+                    sort_mode = {"none": "asc", "asc": "desc", "desc": "none"}[sort_mode]
+                    hover = 0
+                    tasks_scroll = 0
+                    status_msg = {
+                        "asc": "sort: A-Z",
+                        "desc": "sort: Z-A",
+                        "none": "sort: original order",
+                    }[sort_mode]
                 elif key == "y":
                     # Yank copy
                     if tasks:

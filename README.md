@@ -110,6 +110,7 @@ td notes delete 12 --json
 | `d` | Delete selected task |
 | `Space` | Toggle done / active |
 | `s` | Star task (pin to top, bold yellow) |
+| `S` | Cycle task sort: A-Z / Z-A / original order |
 | `c` | Archive all completed tasks |
 | `y` | Copy task list to clipboard |
 | `f` | Filter notes by title in current list; submit empty query to clear |
