@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#141414">
+    <meta name="description" content="td: tasks and Markdown notes in your terminal.">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="td">
+    <meta property="og:description" content="Tasks and Markdown notes in your terminal.">
+    <title>td — terminal tasks and notes</title>
+    <link rel="icon" href="website/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="website/style.css">
+    <script src="website/main.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="page">
+      <header>
+        <p>td — tasks and Markdown notes in your terminal.</p>
+      </header>
+
+      <main id="main">
+        <ul class="features" aria-label="Features">
+          <li>Multiple lists and keyboard navigation.</li>
+          <li>Markdown notes with a built-in editor.</li>
+          <li>Optional database and list encryption.</li>
+          <li>JSON export and a scriptable CLI.</li>
+        </ul>
+        <figure>
+          <a href="assets/demo.gif" aria-label="Open the demo GIF at full size">
+            <img src="assets/demo.gif" width="680" height="360" alt="Demo of td: adding tasks, starring priorities, and switching lists with the keyboard." fetchpriority="high">
+          </a>
+        </figure>
+
+        <section id="install" aria-label="Installation and usage">
+          <dl class="commands">
+            <div>
+              <dt>install (uv)</dt>
+              <dd>
+                <code>uv tool install td-task</code>
+                <button type="button" data-copy="uv tool install td-task" aria-label="Copy uv install command" hidden>[copy]</button>
+              </dd>
+            </div>
+            <div>
+              <dt>or pip</dt>
+              <dd>
+                <code>pip install td-task</code>
+                <button type="button" data-copy="pip install td-task" aria-label="Copy pip install command" hidden>[copy]</button>
+              </dd>
+            </div>
+            <div>
+              <dt>run</dt>
+              <dd>
+                <code>td</code>
+                <button type="button" data-copy="td" aria-label="Copy td launch command" hidden>[copy]</button>
+              </dd>
+            </div>
+            <div>
+              <dt>or uvx</dt>
+              <dd>
+                <code>uvx td-task</code>
+                <button type="button" data-copy="uvx td-task" aria-label="Copy run without installing command" hidden>[copy]</button>
+              </dd>
+            </div>
+          </dl>
+          <p class="requirement">Python 3.14+. <a href="https://docs.astral.sh/uv/getting-started/installation/">uv docs</a>.</p>
+          <p class="copy-status" role="status" aria-live="polite"></p>
+        </section>
+      </main>
+
+      <footer>
+        <a href="https://github.com/lucaspon/td">github.com/lucaspon/td</a>
+        <a href="https://twitter.com/lucasponn">@lucasponn</a>
+      </footer>
+    </div>
+  </body>
+</html>
