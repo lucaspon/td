@@ -16,18 +16,52 @@ console = Console()
 _VERSION: str | None = None
 
 
+def _read_key() -> str:
+    key = term.read_key()
+    if key == term.KEY_RESIZE:
+        if console.is_terminal:
+            console.size = term.get_terminal_size()
+        term.clear_screen()
+    return key
+
+
 def _buffered_frame(render):
-    """Render a complete terminal frame, then emit it with one write."""
+    """Emit one screen-sized frame and return its body scroll offset."""
     @wraps(render)
     def buffered(*args, **kwargs):
+        requested_scroll = kwargs.pop("_frame_scroll", None)
+        requested_footer = kwargs.pop("_frame_footer", 3)
+        if console.is_terminal:
+            console.size = term.get_terminal_size()
         with console.capture() as capture:
             render(*args, **kwargs)
         content = capture.get()
         if content.endswith("\n"):
             content = content[:-1]
+        lines = content.split("\n")
+        height = max(1, console.height)
+        start = 0
+        if len(lines) > height:
+            # Keep the header, footer, and selected row on screen even when
+            # settings or wrapped text exceed the available height.
+            header_rows = min(2, height)
+            footer_rows = min(requested_footer, height - header_rows)
+            body_rows = height - header_rows - footer_rows
+            body = lines[header_rows:len(lines) - footer_rows]
+            selected = next((i for i, line in enumerate(body) if "▸" in line), 0)
+            start = (
+                max(0, selected - body_rows + 1)
+                if requested_scroll is None
+                else max(0, min(requested_scroll, len(body) - body_rows))
+            )
+            footer = lines[-footer_rows:] if footer_rows else []
+            content = "\n".join(
+                lines[:header_rows] + body[start:start + body_rows] + footer
+            )
         frame = "\033[H" + content + "\033[J"
         console.file.write(frame)
         console.file.flush()
+        return start
 
     return buffered
 
@@ -42,6 +76,23 @@ def _app_version() -> str:
         except Exception:
             _VERSION = "?"
     return _VERSION
+
+
+@_buffered_frame
+def _render_message(messages) -> None:
+    for message in messages:
+        console.print(message, end="\033[K\n")
+
+
+def _read_message(messages, allowed_keys: tuple[str, ...] | None = None) -> str:
+    """Keep a static prompt visible across resizes without answering it."""
+    while True:
+        _render_message(messages)
+        key = _read_key()
+        if key == term.KEY_RESIZE:
+            continue
+        if allowed_keys is None or key in allowed_keys:
+            return key
 
 
 def _footer_with_version(hint: str, width: int) -> Text:
@@ -89,14 +140,19 @@ def prompt_password(
     prompt_text: str = "Enter password: ", allow_back: bool = False
 ) -> str | None:
     """Prompt the user for a password, masking the characters with *."""
-    term.clear_screen()
-    console.print()
-    sys.stdout.write(f"  {prompt_text}")
-    sys.stdout.flush()
-
     password = ""
+    def redraw() -> None:
+        term.clear_screen()
+        console.print()
+        sys.stdout.write(f"  {prompt_text}" + "*" * len(password))
+        sys.stdout.flush()
+
+    redraw()
     while True:
-        key = term.read_key()
+        key = _read_key()
+        if key == term.KEY_RESIZE:
+            redraw()
+            continue
         if key in (term.KEY_ENTER, "\r", "\n"):
             break
         elif key in (term.KEY_ESC, "q"):
@@ -241,12 +297,15 @@ def _render_help_screen(lock_list: bool = False) -> None:
     console.print()
 
     console.print(Text("─" * divider_width, style="dim"))
-    console.print(_footer_with_version("  Press any key to return...", divider_width))
+    console.print(_footer_with_version("  ↑/↓:scroll │ PgUp/PgDn:page │ other key:return", divider_width))
 
 
 def _task_visible_rows(mode: str, status_msg: str, term_height: int) -> int:
     """Return task rows that fit above the footer and transient messages."""
-    reserved_rows = 2 if mode in ("new_note", "note_filter", "confirm") or status_msg else 0
+    if mode == "new_note":
+        reserved_rows = 3
+    else:
+        reserved_rows = 2 if mode in ("note_filter", "confirm") or status_msg else 0
     return max(1, term_height - 6 - reserved_rows)
 
 
@@ -270,7 +329,7 @@ def _task_visual_row_ranges(
     mode: str = "normal",
 ) -> tuple[list[int], list[int], int]:
     """Return each task's visual row range and the total rendered rows."""
-    wrap_width = max(20, divider_width - 4)
+    wrap_width = max(1, divider_width - 4)
     starts: list[int] = []
     ends: list[int] = []
     total_rows = 0
@@ -580,7 +639,7 @@ def _render_main(
                         line_text = Text(text, style="underline" if is_note else None)
 
                 # Word wrapping aligned with marker width (4 chars)
-                wrap_w = max(20, divider_width - 4)
+                wrap_w = max(1, divider_width - 4)
                 import textwrap
                 wrapped_text_lines = textwrap.wrap(line_text.plain, width=wrap_w)
                 
@@ -858,8 +917,8 @@ def _render_note_editor(
     scroll: int,
     status_msg: str = "",
 ) -> None:
-    width = max(30, console.width or 80)
-    height = max(10, console.height or 24)
+    width = max(1, console.width)
+    height = max(1, console.height)
 
     header = Text("note • ", style="bold")
     header.append(Text(title, style="bold cyan underline"))
@@ -867,9 +926,9 @@ def _render_note_editor(
     console.print(header, end="\033[K\n", overflow="crop", no_wrap=True)
     console.print(Text("─" * width, style="dim"), end="\033[K\n")
 
-    visible_rows = max(3, height - 6)
+    visible_rows = max(1, height - 6)
     number_width = max(2, len(str(len(lines))))
-    content_width = max(10, width - number_width - 5)
+    content_width = max(1, width - number_width - 5)
     visual_rows, _ = _note_editor_visual_rows(lines, row, column, content_width)
     visible = visual_rows[scroll:scroll + visible_rows]
 
@@ -909,18 +968,21 @@ def _run_note_editor(note_id: int) -> None:
     status_msg = ""
 
     while True:
-        visible_rows = max(3, (console.height or 24) - 6)
-        width = max(30, console.width or 80)
+        visible_rows = max(1, console.height - 6)
+        width = max(1, console.width)
         number_width = max(2, len(str(len(lines))))
-        content_width = max(10, width - number_width - 5)
-        _, cursor_visual_row = _note_editor_visual_rows(lines, row, column, content_width)
+        content_width = max(1, width - number_width - 5)
+        visual_rows, cursor_visual_row = _note_editor_visual_rows(lines, row, column, content_width)
         if cursor_visual_row < scroll:
             scroll = cursor_visual_row
         elif cursor_visual_row >= scroll + visible_rows:
             scroll = cursor_visual_row - visible_rows + 1
+        scroll = max(0, min(scroll, max(0, len(visual_rows) - visible_rows)))
         _render_note_editor(note["title"], lines, row, column, scroll, status_msg)
+        key = _read_key()
+        if key == term.KEY_RESIZE:
+            continue
         status_msg = ""
-        key = term.read_key()
 
         if key == term.KEY_ESC:
             db.update_note_content(note_id, "\n".join(lines))
@@ -1209,8 +1271,13 @@ def _run_archived_lists_loop() -> None:
             if mode == "confirm"
             else ""
         )
-        _render_archived_lists(lists, hover, scroll, mode, confirm_msg)
-        key = term.read_key()
+        _render_archived_lists(
+            lists, hover, scroll, mode, confirm_msg,
+            _frame_footer=5 if mode == "confirm" else 3,
+        )
+        key = _read_key()
+        if key == term.KEY_RESIZE:
+            continue
 
         if mode == "confirm":
             if key in (term.KEY_ENTER, "y"):
@@ -1263,6 +1330,7 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
     fuzzy_scroll = 0
     note_filter = ""
     sort_mode = "none"
+    help_scroll = 0
 
     current_list = list_name
     if not lock_list and active_lists and current_list not in active_lists:
@@ -1271,10 +1339,25 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
     while True:
         if mode == "help":
             term.clear_screen()
-            _render_help_screen(lock_list)
-            term.read_key()
+            help_scroll = _render_help_screen(lock_list, _frame_scroll=help_scroll)
+            key = _read_key()
+            if key == term.KEY_RESIZE:
+                continue
+            if key in (term.KEY_ARROW_DOWN, "j"):
+                help_scroll += 1
+                continue
+            if key in (term.KEY_ARROW_UP, "k"):
+                help_scroll = max(0, help_scroll - 1)
+                continue
+            if key == term.KEY_PAGE_DOWN:
+                help_scroll += max(1, console.height - 5)
+                continue
+            if key == term.KEY_PAGE_UP:
+                help_scroll = max(0, help_scroll - max(1, console.height - 5))
+                continue
             term.clear_screen()
             mode = "normal"
+            help_scroll = 0
             continue
 
         if view == "tasks":
@@ -1394,9 +1477,10 @@ def _run_main_loop(list_name: str = "main", lock_list: bool = False) -> None:
             fuzzy_scroll,
             displayed_filter,
         )
+        key = _read_key()
+        if key == term.KEY_RESIZE:
+            continue
         status_msg = ""
-
-        key = term.read_key()
 
         # Fuzzy list mode logic
         if mode == "fuzzy_list":
@@ -2000,9 +2084,14 @@ def _run_archive_loop(list_name: str = "main", lock_list: bool = False) -> None:
         else:
             confirm_msg = ""
 
-        _render_archive(tasks, hover, scroll, term_height, mode, confirm_msg, list_name)
+        _render_archive(
+            tasks, hover, scroll, term_height, mode, confirm_msg, list_name,
+            _frame_footer=5 if mode == "confirm" else 3,
+        )
 
-        key = term.read_key()
+        key = _read_key()
+        if key == term.KEY_RESIZE:
+            continue
 
         if mode == "normal":
             if key in ("q", term.KEY_ESC):
@@ -2072,7 +2161,6 @@ def _render_settings(
 ) -> None:
     max_tasks = db.get_max_tasks(list_name)
     max_starred = db.get_max_starred_tasks()
-
     header = Text("settings • ", style="bold")
     header.append(Text(f"preferences ({list_name})", style="dim"))
     console.print(header, end="\033[K\n")
@@ -2225,8 +2313,13 @@ def _run_settings_loop(list_name: str) -> None:
     num_items = 7
 
     while True:
-        _render_settings(list_name, hover, mode, edit_text, edit_cursor, status_msg)
-        key = term.read_key()
+        _render_settings(
+            list_name, hover, mode, edit_text, edit_cursor, status_msg,
+            _frame_footer=5 if status_msg else 3,
+        )
+        key = _read_key()
+        if key == term.KEY_RESIZE:
+            continue
 
         if mode == "normal":
             status_msg = ""
@@ -2269,16 +2362,13 @@ def _run_settings_loop(list_name: str) -> None:
                         status_msg = "✗ disable list encryption first"
                     elif not db.is_encryption_enabled():
                         # Prompt warning
-                        term.clear_screen()
-                        console.print()
-                        console.print(Text("  [!] WARNING: If you forget your password, your tasks will be", style="yellow bold"))
-                        console.print(Text("      permanently lost. There is no password recovery option.", style="yellow bold"))
-                        console.print()
-                        console.print(Text("  Press Enter to continue, or Esc to cancel...", style="dim"))
-
-                        confirm_key = ""
-                        while confirm_key not in (term.KEY_ENTER, "\r", "\n", term.KEY_ESC):
-                            confirm_key = term.read_key()
+                        confirm_key = _read_message([
+                            Text(""),
+                            Text("  [!] WARNING: If you forget your password, your tasks will be", style="yellow bold"),
+                            Text("      permanently lost. There is no password recovery option.", style="yellow bold"),
+                            Text(""),
+                            Text("  Press Enter to continue, or Esc to cancel...", style="dim"),
+                        ], (term.KEY_ENTER, "\r", term.KEY_ESC))
 
                         if confirm_key in (term.KEY_ENTER, "\r", "\n"):
                             password = prompt_password("Create password to encrypt database: ")
@@ -2307,20 +2397,13 @@ def _run_settings_loop(list_name: str) -> None:
                     if db.is_encryption_enabled():
                         status_msg = "✗ disable database encryption first"
                     elif not db.is_list_encryption_enabled(list_name):
-                        term.clear_screen()
-                        console.print()
-                        console.print(Text(
-                            f'  Encrypt list "{list_name}" and all its tasks and notes?',
-                            style="yellow bold",
-                        ))
-                        console.print(Text(
-                            "  Forgotten passwords cannot be recovered.", style="yellow bold"
-                        ))
-                        console.print()
-                        console.print(Text("  Press Enter to continue, or Esc to cancel...", style="dim"))
-                        confirm_key = ""
-                        while confirm_key not in (term.KEY_ENTER, "\r", "\n", term.KEY_ESC):
-                            confirm_key = term.read_key()
+                        confirm_key = _read_message([
+                            Text(""),
+                            Text(f'  Encrypt list "{list_name}" and all its tasks and notes?', style="yellow bold"),
+                            Text("  Forgotten passwords cannot be recovered.", style="yellow bold"),
+                            Text(""),
+                            Text("  Press Enter to continue, or Esc to cancel...", style="dim"),
+                        ], (term.KEY_ENTER, "\r", term.KEY_ESC))
                         if confirm_key in (term.KEY_ENTER, "\r", "\n"):
                             password = prompt_password(f'Create password for list "{list_name}": ')
                             confirm = prompt_password("Confirm password: ") if password else ""
@@ -2355,9 +2438,7 @@ def _run_settings_loop(list_name: str) -> None:
                             status_msg = "already up-to-date."
                         else:
                             status_msg = "✓ updated successfully"
-                            term.clear_screen()
-                            console.print(Text("✓ td updated successfully!", style="green bold"))
-                            console.print()
+                            messages = [Text("✓ td updated successfully!", style="green bold"), Text("")]
                             import os
                             from rich.markdown import Markdown
                             changelog_path = os.path.join(os.path.dirname(__file__), "CHANGELOG.md")
@@ -2365,12 +2446,11 @@ def _run_settings_loop(list_name: str) -> None:
                                 try:
                                     with open(changelog_path, "r", encoding="utf-8") as f:
                                         content = f.read()
-                                    console.print(Markdown(content))
+                                    messages.append(Markdown(content))
                                 except Exception:
                                     pass
-                            console.print()
-                            console.print(Text("Press any key to return to settings...", style="dim"))
-                            term.read_key()
+                            messages.extend([Text(""), Text("Press any key to return to settings...", style="dim")])
+                            _read_message(messages)
                     else:
                         status_msg = f"✗ update failed: {result.stderr.strip().split(chr(10))[-1]}"
 

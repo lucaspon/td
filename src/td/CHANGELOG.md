@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.5] - 2026-11-04
+- Redraw automatically when terminal dimensions change, without waiting for a keypress.
+- Preserve selection, unsaved edits, note cursor, and confirmations while resizing.
+- Fit frames to smaller windows and reflow note content when the terminal grows.
+- Scroll help with arrow keys and PageUp/PageDown.
+
 ## [0.2.4] - 2026-08-05
 - Add live, case-insensitive note-title filtering with `f` in the current list.
 

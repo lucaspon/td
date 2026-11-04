@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -38,6 +39,30 @@ KEY_CTRL_BACKSPACE = "\x17"
 KEY_CMD_BACKSPACE = "\x15"
 KEY_CTRL_P = "\x10"
 KEY_CTRL_S = "\x13"
+KEY_RESIZE = "<resize>"
+
+_last_size: os.terminal_size | None = None
+_RESIZE_POLL_INTERVAL = 0.05
+
+
+def get_terminal_size() -> os.terminal_size:
+    """Read live terminal dimensions, without stale COLUMNS/LINES overrides."""
+    for stream in (sys.stdout, sys.stdin):
+        try:
+            size = os.get_terminal_size(stream.fileno())
+        except (AttributeError, OSError, ValueError):
+            continue
+        if size.columns > 0 and size.lines > 0:
+            return size
+    return os.terminal_size((80, 24))
+
+
+def _terminal_resized() -> bool:
+    global _last_size
+    size = get_terminal_size()
+    changed = _last_size is not None and size != _last_size
+    _last_size = size
+    return changed
 
 
 if IS_WINDOWS:
@@ -86,6 +111,8 @@ if IS_WINDOWS:
     class _RawContext:
         """Context manager for raw terminal mode on Windows."""
         def __enter__(self):
+            global _last_size
+            _last_size = get_terminal_size()
             return self
 
         def __exit__(self, *args):
@@ -101,6 +128,12 @@ if IS_WINDOWS:
         we translate to ANSI sequences. A literal Esc (or a VT-input terminal
         sending real escape sequences) is handled as a fallback.
         """
+        while True:
+            if _terminal_resized():
+                return KEY_RESIZE
+            if msvcrt.kbhit():
+                break
+            time.sleep(_RESIZE_POLL_INTERVAL)
         ch = msvcrt.getwch()
 
         # Native special-key protocol.
@@ -131,8 +164,14 @@ if IS_WINDOWS:
         return ch
 
 else:
+    import codecs
+    import select
     import tty
     import termios
+
+    _input_decoder = codecs.getincrementaldecoder(
+        sys.stdin.encoding or "utf-8"
+    )(errors="replace")
 
     class _RawContext:
         """Context manager for raw terminal mode on Unix."""
@@ -141,7 +180,12 @@ else:
             self.old_settings = termios.tcgetattr(self.fd)
 
         def __enter__(self):
+            global _last_size, _input_decoder
             tty.setcbreak(self.fd)
+            _last_size = get_terminal_size()
+            _input_decoder = codecs.getincrementaldecoder(
+                sys.stdin.encoding or "utf-8"
+            )(errors="replace")
             return self
 
         def __exit__(self, *args):
@@ -152,30 +196,38 @@ else:
 
     ESC = "\x1b"
 
+    def _read_char(fd: int, timeout: float | None = None) -> str:
+        """Wait for input or a resize; keep pasted UTF-8 input out of TextIO buffers."""
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        while True:
+            if deadline is None and _terminal_resized():
+                return KEY_RESIZE
+            wait = _RESIZE_POLL_INTERVAL
+            if deadline is not None:
+                wait = min(wait, max(0, deadline - time.monotonic()))
+            if select.select([fd], [], [], wait)[0]:
+                data = os.read(fd, 1)
+                if not data:
+                    return ""
+                char = _input_decoder.decode(data)
+                if char:
+                    return char
+            if deadline is not None and time.monotonic() >= deadline:
+                return ""
+
     def read_key() -> str:
-        """Read a single keypress on Unix, handling escape sequences."""
+        """Read a key or resize event without waiting for the next keypress."""
         fd = sys.stdin.fileno()
-        ch = sys.stdin.read(1)
+        ch = _read_char(fd)
         if ch == ESC:
             seq = ch
-            try:
-                old = termios.tcgetattr(fd)
-                new = termios.tcgetattr(fd)
-                new[3] = new[3] & ~(termios.ICANON | termios.ECHO)
-                new[6][termios.VMIN] = 0
-                new[6][termios.VTIME] = 1
-                termios.tcsetattr(fd, termios.TCSANOW, new)
-                while True:
-                    c = sys.stdin.read(1)
-                    if c:
-                        seq += c
-                        if c.isalpha() or c == "~":
-                            break
-                    else:
-                        break
-                termios.tcsetattr(fd, termios.TCSANOW, old)
-            except Exception:
-                pass
+            while True:
+                char = _read_char(fd, timeout=0.1)
+                if not char:
+                    break
+                seq += char
+                if char.isalpha() or char == "~":
+                    break
             return seq
         return ch
 

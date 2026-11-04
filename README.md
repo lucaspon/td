@@ -99,6 +99,9 @@ td notes delete 12 --json
 
 ## TUI Keybindings
 
+The TUI redraws automatically when you resize the terminal, keeping the current
+selection and unsaved edits. Help supports arrow-key and PageUp/PageDown scrolling.
+
 ### Tasks
 
 | Key | Action |
