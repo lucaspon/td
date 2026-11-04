@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,6 +17,8 @@ from td import db, terminal, tui
 class NoteTuiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_config_path = os.environ.get("TD_CONFIG_PATH")
+        os.environ["TD_CONFIG_PATH"] = str(Path(self.temp_dir.name) / "config.toml")
         self.original_path = db.DB_PATH
         self.original_key = db.ENCRYPTION_KEY
         self.original_list_keys = db.LIST_ENCRYPTION_KEYS.copy()
@@ -28,6 +31,10 @@ class NoteTuiTests(unittest.TestCase):
         db.ENCRYPTION_KEY = self.original_key
         db.LIST_ENCRYPTION_KEYS.clear()
         db.LIST_ENCRYPTION_KEYS.update(self.original_list_keys)
+        if self.original_config_path is None:
+            os.environ.pop("TD_CONFIG_PATH", None)
+        else:
+            os.environ["TD_CONFIG_PATH"] = self.original_config_path
         self.temp_dir.cleanup()
 
     def _edit_note(self, note_id: int, keys: list[str]) -> None:
@@ -605,6 +612,16 @@ class NoteTuiTests(unittest.TestCase):
         ):
             tui._run_settings_loop("main")
         self.assertFalse(db.is_list_encryption_enabled("main"))
+
+    def test_settings_can_run_github_backup(self) -> None:
+        keys = iter([terminal.KEY_ARROW_DOWN] * 8 + [terminal.KEY_ENTER, "q"])
+        with (
+            patch.object(terminal, "read_key", side_effect=lambda: next(keys)),
+            patch.object(tui, "_github_backup_now", return_value="✓ backup uploaded") as backup_now,
+        ):
+            tui._run_settings_loop("main")
+
+        backup_now.assert_called_once_with()
 
 
 if __name__ == "__main__":

@@ -72,6 +72,10 @@ def main() -> None:
             _run_export(args)
         elif len(args) > 1 and args[1] in ("import", "-import", "--import"):
             _run_import(args)
+        elif len(args) > 1 and args[1] in ("backup", "-backup", "--backup"):
+            _run_backup(args)
+        elif len(args) > 1 and args[1] in ("restore", "-restore", "--restore"):
+            _run_restore(args)
         else:
             from . import db
             lists = db.get_all_lists()
@@ -123,6 +127,8 @@ def _run_help() -> None:
     commands_table.add_row("  archive", "Open TUI directly in the completed archive screen")
     commands_table.add_row("  export [file]", "Export database to JSON file or print to stdout")
     commands_table.add_row("  import <file>", "Import and merge database records from a JSON file")
+    commands_table.add_row("  backup github [repo]", "Encrypt and upload a backup to a private GitHub repo")
+    commands_table.add_row("  restore github [repo]", "Download and restore an encrypted GitHub backup")
     commands_table.add_row("  update", "Upgrade the `td` package to the latest version")
     
     console.print(commands_table)
@@ -136,6 +142,8 @@ def _run_help() -> None:
     
     options_table.add_row("  -l, --list <name>", "Specify/create list context (TUI list-lock, CLI scope)")
     options_table.add_row("  --dev", "Watch source code directory and restart interactive TUI on changes")
+    options_table.add_row("  --no-encrypt", "Store a GitHub backup as plain JSON (private repo required)")
+    options_table.add_row("  --save-password", "Save encrypted backup password in macOS Keychain for auto-sync")
     options_table.add_row("  -h, --help", "Print this detailed, LLM-friendly help menu and exit")
     
     console.print(options_table)
@@ -256,6 +264,7 @@ def _run_notes(list_name: str, has_list: bool, args: list[str]) -> None:
             print(json.dumps(note, indent=2))
         else:
             print(f"✓ Note added to '{list_name}' (note ID: {note['id']}, task ID: {note['task_id']})")
+        _auto_sync()
         return
 
     if action == "list":
@@ -315,6 +324,7 @@ def _run_notes(list_name: str, has_list: bool, args: list[str]) -> None:
             print(json.dumps(updated, indent=2))
         else:
             print(f"✓ Note {note_id} updated.")
+        _auto_sync()
         return
 
     deleted = db.delete_note(note_id)
@@ -322,6 +332,7 @@ def _run_notes(list_name: str, has_list: bool, args: list[str]) -> None:
         print(json.dumps({"id": note_id, "deleted": deleted}))
     else:
         print(f"✓ Note {note_id} deleted.")
+    _auto_sync()
 
 
 def _run_add(list_name: str, args: list[str]) -> None:
@@ -338,6 +349,7 @@ def _run_add(list_name: str, args: list[str]) -> None:
         print("✗ Failed to add task (maximum active tasks reached).")
         sys.exit(1)
     print(f"✓ Task added successfully to list '{list_name}' (ID: {result['id']})")
+    _auto_sync()
 
 
 def _run_list(list_name: str) -> None:
@@ -571,8 +583,96 @@ def _run_import(args: list[str]) -> None:
             json_str = f.read()
         db.import_from_json(json_str)
         print(f"✓ Database successfully imported and merged from {filepath}")
+        _auto_sync()
     except Exception as e:
         print(f"✗ Import failed: {e}")
+        sys.exit(1)
+
+
+def _github_backup_repo(args: list[str]) -> str:
+    repo = _option_value(args, "--repo")
+    if repo is None and len(args) > 3 and not args[3].startswith("-"):
+        repo = args[3]
+    return (repo or "td-backup").strip()
+
+
+def _backup_password(*, confirm: bool) -> str:
+    import getpass
+
+    try:
+        password = getpass.getpass("Backup password: ")
+        if confirm:
+            repeated = getpass.getpass("Confirm backup password: ")
+            if password != repeated:
+                raise ValueError("Backup passwords do not match")
+        if not password:
+            raise ValueError("Backup password cannot be empty")
+        return password
+    except (KeyboardInterrupt, EOFError):
+        print("\nCancelled.")
+        sys.exit(0)
+
+
+def _auto_sync() -> None:
+    from . import backup, config, db
+
+    try:
+        repo = backup.sync_if_configured(db.export_to_json())
+        if repo:
+            print(
+                f"✓ auto-synced backup to {repo}/{backup.BACKUP_FILENAME}",
+                file=sys.stderr,
+            )
+    except Exception as error:
+        print(f"✗ auto-sync failed: {error}", file=sys.stderr)
+
+
+def _run_backup(args: list[str]) -> None:
+    if len(args) < 3 or args[2] != "github":
+        print("Usage: td backup github [repo|--repo <owner/name>] [--no-encrypt] [--save-password]")
+        sys.exit(1)
+
+    from . import backup, config, db
+
+    _cli_ensure_unlocked()
+    try:
+        repo_name = _github_backup_repo(args)
+        should_encrypt = "--no-encrypt" not in args
+        if not should_encrypt and "--save-password" in args:
+            raise ValueError("--save-password requires encrypted backup mode")
+        password = _backup_password(confirm=True) if should_encrypt else None
+        data = db.export_to_json()
+        payload = backup.encrypt_backup(data, password) if password else data
+        repo = backup.upload_backup(repo_name, payload)
+        config.set_github_backup(
+            repo=repo,
+            last_sync_digest=backup.backup_digest(data, should_encrypt),
+        )
+        if password and "--save-password" in args:
+            backup.store_password(repo, password)
+        mode = "encrypted" if password else "unencrypted"
+        print(f"✓ {mode} backup uploaded to {repo}/{backup.BACKUP_FILENAME}")
+    except Exception as error:
+        print(f"✗ GitHub backup failed: {error}")
+        sys.exit(1)
+
+
+def _run_restore(args: list[str]) -> None:
+    if len(args) < 3 or args[2] != "github":
+        print("Usage: td restore github [repo|--repo <owner/name>]")
+        sys.exit(1)
+
+    from . import backup, db
+
+    _cli_ensure_unlocked()
+    try:
+        payload = backup.download_backup(_github_backup_repo(args))
+        password = _backup_password(confirm=False) if backup.is_encrypted_backup(payload) else None
+        db.import_from_json(backup.decode_backup(payload, password))
+        mode = "encrypted" if password else "unencrypted"
+        print(f"✓ {mode} GitHub backup restored and merged")
+    except Exception as error:
+        print(f"✗ GitHub restore failed: {error}")
         sys.exit(1)
 
 

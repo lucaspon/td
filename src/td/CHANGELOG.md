@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.6] - 2026-11-04
+- Back up and restore data through private GitHub repositories using the gh CLI.
+- Encrypt backups by default, with optional plain JSON storage.
+- Add configurable auto-sync that skips unchanged data and supports macOS Keychain passwords.
+- Add Sync settings, backup progress screens, and a link to open the GitHub repository.
+- Support backups to new and existing empty repositories.
+
 ## [0.2.5] - 2026-11-04
 - Redraw automatically when terminal dimensions change, without waiting for a keypress.
 - Preserve selection, unsaved edits, note cursor, and confirmations while resizing.

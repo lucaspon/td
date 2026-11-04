@@ -55,6 +55,8 @@ td [command] [--list <name>]
 | `td archive` | Open the archive screen |
 | `td export [file]` | Export database to JSON (stdout if no file) |
 | `td import <file>` | Merge a JSON backup into the database |
+| `td backup github [repo]` | Encrypt and upload a backup to a private GitHub repo |
+| `td restore github [repo]` | Download and restore an encrypted GitHub backup |
 | `td update` | Upgrade to the latest version |
 | `td --version` | Print the installed version |
 | `td --help` | Print the help menu |
@@ -196,7 +198,8 @@ marker. Press `Enter` or `Backspace` on an empty continuation to leave list mode
 | `q` / `Esc` | Return |
 
 Settings you can change: max tasks per list (3–50), max starred tasks, whole-database
-encryption, current-list encryption, and backup export / import.
+encryption, current-list encryption, backup export / import, GitHub backup repo,
+GitHub backup now, auto-sync, and GitHub backup encryption.
 
 ## Agent-friendly
 
@@ -281,9 +284,42 @@ td export > backup.json
 
 # restore on another machine
 td import backup.json
+
+# encrypt and upload to a private GitHub repo (creates td-backup if missing)
+td backup github --save-password
+td backup github lucaspon/my-td-backup --save-password
+
+# optional: store plain JSON instead of an encrypted backup
+td backup github --no-encrypt
+
+# restore and merge from GitHub
+td restore github
 ```
 
 You can encrypt the whole database or only the current list from settings (`/`).
 Each encrypted list uses its own password-derived key. Tasks and note bodies stay
 encrypted in JSON backups. Whole-database and per-list encryption cannot run
 together. If you forget a password, there is no recovery.
+
+By default, GitHub backups add a separate password-based encryption layer around
+the full JSON export. In encrypted mode, `td` sends only the encrypted envelope
+to GitHub. The `gh` CLI must be
+installed and authenticated. `td backup github` creates the target repository as
+private when it does not exist, and refuses to write to a public repository.
+
+Auto-sync uses `~/.config/td/config.toml`:
+
+```toml
+[github_backup]
+auto_sync = true
+repo = "owner/td-backup"
+encrypt = true
+```
+
+Auto-sync runs after TUI sessions and CLI writes. Encrypted auto-sync needs a
+password saved in macOS Keychain with `td backup github --save-password`.
+Set `encrypt = false` to
+store plain JSON. The repository remains private, but GitHub can then read the
+backup. Encrypted mode remains the default. `td` stores a digest of the last
+successful export and skips the GitHub update when the data has not changed.
+Manual backups update the same digest.

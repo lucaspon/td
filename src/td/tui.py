@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.text import Text
 
 from . import db
+from . import config
 from . import terminal as term
 
 console = Console()
@@ -134,6 +135,100 @@ def _copy_to_clipboard(text: str) -> bool:
         except Exception:
             break
     return False
+
+
+def _auto_sync() -> None:
+    from . import backup
+
+    settings = config.github_backup()
+    if settings.get("auto_sync") is not True:
+        return
+    repo = settings.get("repo", "td-backup")
+    if not isinstance(repo, str) or not repo.strip():
+        return
+    should_encrypt = settings.get("encrypt", True) is not False
+    if should_encrypt and backup.load_password(repo.strip()) is None:
+        return
+
+    try:
+        _render_github_backup_loading(repo.strip(), should_encrypt)
+        repo = backup.sync_if_configured(db.export_to_json())
+        if repo:
+            print(
+                f"✓ auto-synced backup to {repo}/{backup.BACKUP_FILENAME}",
+                file=sys.stderr,
+            )
+    except Exception as error:
+        print(f"✗ auto-sync failed: {error}", file=sys.stderr)
+
+
+@_buffered_frame
+def _render_github_backup_loading(repo: str, encrypted: bool) -> None:
+    header = Text("GitHub backup • ", style="bold")
+    header.append(Text("working", style="bold yellow"))
+    console.print(header, end="\033[K\n")
+    console.print(Text("─" * min(len(_normal_hint_text(False)), console.width or 80), style="dim"), end="\033[K\n")
+    console.print(end="\033[K\n")
+    console.print(Text(f"  Uploading {'encrypted ' if encrypted else ''}backup to {repo}...", style="yellow bold"), end="\033[K\n")
+    console.print(Text("  Please wait.", style="dim"), end="\033[K\n")
+
+
+def _github_backup_now() -> str:
+    from . import backup
+
+    settings = config.github_backup()
+    repo = settings.get("repo", "td-backup")
+    if not isinstance(repo, str) or not repo.strip():
+        repo = "td-backup"
+    should_encrypt = settings.get("encrypt", True) is not False
+
+    try:
+        password: str | None = None
+        if should_encrypt:
+            password = prompt_password("Backup password: ")
+            if not password:
+                return "✗ backup password cannot be empty"
+            confirm = prompt_password("Confirm backup password: ")
+            if password != confirm:
+                return "✗ backup passwords do not match"
+
+        _render_github_backup_loading(repo.strip(), should_encrypt)
+        data = db.export_to_json()
+        payload = backup.encrypt_backup(data, password) if password else data
+        resolved_repo = backup.upload_backup(repo.strip(), payload)
+        config.set_github_backup(
+            repo=resolved_repo,
+            last_sync_digest=backup.backup_digest(data, should_encrypt),
+        )
+
+        if password:
+            key = _read_message([
+                Text("  Backup uploaded. Save password for auto-sync? [y/N]", style="yellow bold")
+            ])
+            if key.lower() == "y":
+                backup.store_password(resolved_repo, password)
+                return f"✓ encrypted backup uploaded to {resolved_repo}"
+        mode = "encrypted" if password else "unencrypted"
+        return f"✓ {mode} backup uploaded to {resolved_repo}"
+    except Exception as error:
+        return f"✗ GitHub backup failed: {error}"
+
+
+def _open_github_repo() -> str:
+    import webbrowser
+    from . import backup
+
+    settings = config.github_backup()
+    repo = settings.get("repo", "td-backup")
+    if not isinstance(repo, str) or not repo.strip():
+        repo = "td-backup"
+    try:
+        url = backup.repo_url(repo.strip())
+        if not webbrowser.open_new_tab(url):
+            return "✗ could not open browser"
+        return f"✓ opened {url}"
+    except Exception as error:
+        return f"✗ could not open GitHub repo: {error}"
 
 
 def prompt_password(
@@ -2161,6 +2256,13 @@ def _render_settings(
 ) -> None:
     max_tasks = db.get_max_tasks(list_name)
     max_starred = db.get_max_starred_tasks()
+    github_settings = config.github_backup()
+    github_repo = github_settings.get("repo", "td-backup")
+    if not isinstance(github_repo, str) or not github_repo.strip():
+        github_repo = "td-backup"
+    github_auto_sync = github_settings.get("auto_sync") is True
+    github_encrypt = github_settings.get("encrypt", True) is not False
+
     header = Text("settings • ", style="bold")
     header.append(Text(f"preferences ({list_name})", style="dim"))
     console.print(header, end="\033[K\n")
@@ -2176,6 +2278,7 @@ def _render_settings(
     divider_width = min(len(_normal_hint_text(False)), console.width or 80)
     console.print(Text("─" * divider_width, style="dim"), end="\033[K\n")
     console.print(end="\033[K\n")
+    console.print(Text("Limits", style="bold yellow"), end="\033[K\n")
 
     # Max tasks row
     is_hovered_max = hover == 0
@@ -2217,6 +2320,9 @@ def _render_settings(
         starred_line.append(Text(str(max_starred), style="dim"))
     console.print(starred_line, end="\033[K\n")
 
+    console.print(end="\033[K\n")
+    console.print(Text("Security", style="bold yellow"), end="\033[K\n")
+
     # Database encryption row
     is_hovered_enc = hover == 2
     prefix_enc = "▸ " if is_hovered_enc else "  "
@@ -2246,6 +2352,9 @@ def _render_settings(
         list_enc_line.append(Text(list_enc_status, style="dim"))
     console.print(list_enc_line, end="\033[K\n")
 
+    console.print(end="\033[K\n")
+    console.print(Text("Application", style="bold yellow"), end="\033[K\n")
+
     # Update row
     is_hovered_update = hover == 4
     prefix2 = "▸ " if is_hovered_update else "  "
@@ -2255,6 +2364,9 @@ def _render_settings(
     else:
         update_line.append(Text("update td", style="dim"))
     console.print(update_line, end="\033[K\n")
+
+    console.print(end="\033[K\n")
+    console.print(Text("Data", style="bold yellow"), end="\033[K\n")
 
     # Export row
     is_hovered_export = hover == 5
@@ -2290,6 +2402,63 @@ def _render_settings(
         import_line.append(Text("import database", style="dim"))
     console.print(import_line, end="\033[K\n")
 
+    console.print(end="\033[K\n")
+    console.print(Text("Sync", style="bold yellow"), end="\033[K\n")
+
+    # GitHub backup repo row
+    is_hovered_github_repo = hover == 7
+    prefix_github_repo = "▸ " if is_hovered_github_repo else "  "
+    github_repo_line = Text(prefix_github_repo)
+    if mode == "edit" and hover == 7:
+        github_repo_line.append(Text("GitHub backup repo: ", style="cyan bold"))
+        github_repo_line.append(Text(edit_text[:edit_cursor], style="yellow bold"))
+        char_under = edit_text[edit_cursor] if edit_cursor < len(edit_text) else " "
+        github_repo_line.append(Text(char_under, style="reverse yellow bold"))
+        if edit_cursor < len(edit_text):
+            github_repo_line.append(Text(edit_text[edit_cursor + 1:], style="yellow bold"))
+    elif is_hovered_github_repo:
+        github_repo_line.append(Text("GitHub backup repo: ", style="cyan bold"))
+        github_repo_line.append(Text(github_repo, style="bold"))
+    else:
+        github_repo_line.append(Text("GitHub backup repo: ", style="dim"))
+        github_repo_line.append(Text(github_repo, style="dim"))
+    console.print(github_repo_line, end="\033[K\n")
+
+    # GitHub backup action row
+    is_hovered_github_backup = hover == 8
+    prefix_github_backup = "▸ " if is_hovered_github_backup else "  "
+    github_backup_line = Text(prefix_github_backup)
+    github_backup_line.append(Text(
+        "backup to GitHub now",
+        style="cyan bold" if is_hovered_github_backup else "dim",
+    ))
+    console.print(github_backup_line, end="\033[K\n")
+
+    # GitHub auto-sync row
+    is_hovered_auto_sync = hover == 9
+    prefix_auto_sync = "▸ " if is_hovered_auto_sync else "  "
+    auto_sync_line = Text(prefix_auto_sync)
+    auto_sync_line.append(Text("GitHub auto-sync: ", style="cyan bold" if is_hovered_auto_sync else "dim"))
+    auto_sync_line.append(Text("on" if github_auto_sync else "off", style="bold" if is_hovered_auto_sync else "dim"))
+    console.print(auto_sync_line, end="\033[K\n")
+
+    # GitHub backup encryption row
+    is_hovered_github_encrypt = hover == 10
+    prefix_github_encrypt = "▸ " if is_hovered_github_encrypt else "  "
+    github_encrypt_line = Text(prefix_github_encrypt)
+    github_encrypt_line.append(Text("GitHub backup encryption: ", style="cyan bold" if is_hovered_github_encrypt else "dim"))
+    github_encrypt_line.append(Text("on" if github_encrypt else "off", style="bold" if is_hovered_github_encrypt else "dim"))
+    console.print(github_encrypt_line, end="\033[K\n")
+
+    is_hovered_open_repo = hover == 11
+    prefix_open_repo = "▸ " if is_hovered_open_repo else "  "
+    open_repo_line = Text(prefix_open_repo)
+    open_repo_line.append(Text(
+        "open GitHub repo on web",
+        style="cyan bold" if is_hovered_open_repo else "dim",
+    ))
+    console.print(open_repo_line, end="\033[K\n")
+
     if status_msg:
         console.print(end="\033[K\n")
         console.print(Text(f"  {status_msg}", style="yellow bold"), end="\033[K\n")
@@ -2310,7 +2479,7 @@ def _run_settings_loop(list_name: str) -> None:
     edit_text = ""
     edit_cursor = 0
     status_msg = ""
-    num_items = 7
+    num_items = 12
 
     while True:
         _render_settings(
@@ -2356,6 +2525,23 @@ def _run_settings_loop(list_name: str) -> None:
                     mode = "edit"
                     edit_text = "backup.json"
                     edit_cursor = len(edit_text)
+                elif hover == 7:
+                    mode = "edit"
+                    github_repo = config.github_backup().get("repo", "td-backup")
+                    edit_text = github_repo if isinstance(github_repo, str) else "td-backup"
+                    edit_cursor = len(edit_text)
+                elif hover == 8:
+                    status_msg = _github_backup_now()
+                elif hover == 9:
+                    enabled = config.github_backup().get("auto_sync") is True
+                    config.set_github_backup(auto_sync=not enabled)
+                    status_msg = f"✓ GitHub auto-sync {'enabled' if not enabled else 'disabled'}"
+                elif hover == 10:
+                    encrypted = config.github_backup().get("encrypt", True) is not False
+                    config.set_github_backup(encrypt=not encrypted)
+                    status_msg = f"✓ GitHub backup encryption {'enabled' if not encrypted else 'disabled'}"
+                elif hover == 11:
+                    status_msg = _open_github_repo()
                 elif hover == 2:
                     # Toggle encryption
                     if not db.is_encryption_enabled() and db.get_encrypted_lists():
@@ -2504,6 +2690,13 @@ def _run_settings_loop(list_name: str) -> None:
                         status_msg = f"✓ database imported from {filename}"
                     except Exception as e:
                         status_msg = f"✗ import failed: {e}"
+                elif hover == 7:
+                    repo = edit_text.strip()
+                    if not repo:
+                        status_msg = "✗ GitHub backup repo cannot be empty"
+                    else:
+                        config.set_github_backup(repo=repo)
+                        status_msg = f"✓ GitHub backup repo set to {repo}"
                 mode = "normal"
                 edit_text = ""
                 edit_cursor = 0
@@ -2555,7 +2748,7 @@ def _run_settings_loop(list_name: str) -> None:
                 edit_cursor = 0
             elif key == term.KEY_END:
                 edit_cursor = len(edit_text)
-            elif len(key) == 1 and (key.isdigit() or (hover in (5, 6) and ord(key) >= 32)):
+            elif len(key) == 1 and (key.isdigit() or (hover in (5, 6, 7) and ord(key) >= 32)):
                 edit_text = edit_text[:edit_cursor] + key + edit_text[edit_cursor:]
                 edit_cursor += 1
 
@@ -2582,6 +2775,7 @@ def run_main(list_name: str = "main", lock_list: bool = False) -> None:
             if not _ensure_unlocked():
                 return
             _run_main_loop(list_name, lock_list)
+            _auto_sync()
         except KeyboardInterrupt:
             pass
         finally:
@@ -2598,6 +2792,7 @@ def run_archive(list_name: str = "main", lock_list: bool = False) -> None:
             if not _ensure_list_unlocked(list_name):
                 return
             _run_archive_loop(list_name, lock_list)
+            _auto_sync()
         except KeyboardInterrupt:
             pass
         finally:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -15,6 +16,8 @@ from td.__main__ import _run_notes
 class NoteCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_config_path = os.environ.get("TD_CONFIG_PATH")
+        os.environ["TD_CONFIG_PATH"] = str(Path(self.temp_dir.name) / "config.toml")
         self.original_path = db.DB_PATH
         self.original_key = db.ENCRYPTION_KEY
         self.original_list_keys = db.LIST_ENCRYPTION_KEYS.copy()
@@ -27,6 +30,10 @@ class NoteCliTests(unittest.TestCase):
         db.ENCRYPTION_KEY = self.original_key
         db.LIST_ENCRYPTION_KEYS.clear()
         db.LIST_ENCRYPTION_KEYS.update(self.original_list_keys)
+        if self.original_config_path is None:
+            os.environ.pop("TD_CONFIG_PATH", None)
+        else:
+            os.environ["TD_CONFIG_PATH"] = self.original_config_path
         self.temp_dir.cleanup()
 
     def _run(self, args: list[str], list_name: str = "work", has_list: bool = True) -> str:
