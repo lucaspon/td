@@ -2649,12 +2649,12 @@ def _run_settings_loop(list_name: str) -> None:
                 if hover == 0:
                     try:
                         new_max = int(edit_text)
-                        if new_max < 3 or new_max > 50:
+                        if new_max < 3 or new_max > db.MAX_TASKS_LIMIT:
                             raise ValueError
                         db.set_max_tasks(new_max, list_name)
                         status_msg = f"✓ max tasks set to {new_max} for list '{list_name}'"
                     except ValueError:
-                        status_msg = "✗ must be an integer between 3 and 50"
+                        status_msg = f"✗ must be an integer between 3 and {db.MAX_TASKS_LIMIT}"
                 elif hover == 1:
                     try:
                         new_max = int(edit_text)
@@ -2705,7 +2705,7 @@ def _run_settings_loop(list_name: str) -> None:
                     val = int(edit_text) if edit_text.strip() else 3
                 except ValueError:
                     val = 3
-                new_val = min(50, val + 1)
+                new_val = min(db.MAX_TASKS_LIMIT, val + 1)
                 edit_text = str(new_val)
                 edit_cursor = len(edit_text)
             elif hover == 0 and key == term.KEY_ARROW_DOWN:

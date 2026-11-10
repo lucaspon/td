@@ -7,7 +7,8 @@ from pathlib import Path
 
 DB_PATH = Path(os.environ.get("TD_DB_PATH", Path.home() / ".td.db"))
 
-DEFAULT_MAX_TASKS = 15
+DEFAULT_MAX_TASKS = 100
+MAX_TASKS_LIMIT = 100
 DEFAULT_MAX_STARRED_TASKS = 3
 
 SCHEMA = """

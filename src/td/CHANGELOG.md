@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.2.7] - 2026-11-10
+- Raise default max tasks per list from 15 to 100, and the max tasks setting range to 3–100.
+
 ## [0.2.6] - 2026-11-04
 - Back up and restore data through private GitHub repositories using the gh CLI.
 - Encrypt backups by default, with optional plain JSON storage.

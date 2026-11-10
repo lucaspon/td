@@ -197,7 +197,7 @@ marker. Press `Enter` or `Backspace` on an empty continuation to leave list mode
 | `PageUp` / `PageDown` | Move one viewport |
 | `q` / `Esc` | Return |
 
-Settings you can change: max tasks per list (3–50), max starred tasks, whole-database
+Settings you can change: max tasks per list (3–100), max starred tasks, whole-database
 encryption, current-list encryption, backup export / import, GitHub backup repo,
 GitHub backup now, auto-sync, and GitHub backup encryption.
 
